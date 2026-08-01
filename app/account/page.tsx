@@ -3,10 +3,10 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Camera, Check, History, KeyRound, LogOut, Save, UserRound } from 'lucide-react';
+import { ArrowLeft, Camera, Check, Crown, History, KeyRound, LogOut, Save, UserRound } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
-type Profile = { username: string; email: string; avatar_url: string | null; birth_date: string | null; gender: string | null };
+type Profile = { username: string; email: string; avatar_url: string | null; birth_date: string | null; gender: string | null; is_premium: boolean; premium_until: string | null };
 type GameRow = { id: string; spotify_track_id: string; track_title: string; track_artist: string; image_url: string | null; score: number; accuracy: number; wpm: number; rank: string; mode: string; created_at: string };
 type BestSong = GameRow & { attempts: number };
 
@@ -33,7 +33,7 @@ export default function AccountPage() {
       if (!authData.user) { router.replace('/auth'); return; }
       setUserId(authData.user.id);
       const [{ data: existingProfile, error: profileError }, { data: gameData }] = await Promise.all([
-        supabase.from('users').select('username,email,avatar_url,birth_date,gender').eq('id', authData.user.id).maybeSingle(),
+        supabase.from('users').select('username,email,avatar_url,birth_date,gender,is_premium,premium_until').eq('id', authData.user.id).maybeSingle(),
         supabase.from('game_results').select('id,spotify_track_id,track_title,track_artist,image_url,score,accuracy,wpm,rank,mode,created_at').eq('user_id', authData.user.id).order('created_at', { ascending: false }),
       ]);
       let profileData = existingProfile;
@@ -45,7 +45,7 @@ export default function AccountPage() {
           id: authData.user.id,
           username: fallbackName.length >= 3 ? fallbackName : `jugador_${authData.user.id.slice(0, 6)}`,
           email: authData.user.email || '',
-        }, { onConflict: 'id' }).select('username,email,avatar_url,birth_date,gender').single();
+        }, { onConflict: 'id' }).select('username,email,avatar_url,birth_date,gender,is_premium,premium_until').single();
         if (repairError) setError(repairError.message); else profileData = repairedProfile;
       } else if (profileError) setError(profileError.message);
       if (profileData) setProfile(profileData);
@@ -123,7 +123,7 @@ export default function AccountPage() {
     <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_20%_0%,rgba(124,58,237,.25),transparent_38%),radial-gradient(circle_at_85%_25%,rgba(6,182,212,.16),transparent_30%)]"/>
     <header className="relative border-b border-white/10 bg-[#07080d]/85"><div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4"><Link href="/" className="flex items-center gap-2 font-bold"><ArrowLeft size={18}/> Volver al juego</Link><button onClick={logout} className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2 text-sm text-zinc-300 hover:bg-white/5"><LogOut size={16}/> Cerrar sesión</button></div></header>
     <div className="relative mx-auto max-w-6xl px-4 py-10">
-      <div className="mb-8 flex flex-col items-center gap-5 sm:flex-row sm:items-end"><div className="relative">{profile.avatar_url?<img src={profile.avatar_url} alt="Foto de perfil" className="h-28 w-28 rounded-3xl border border-white/15 object-cover"/>:<div className="grid h-28 w-28 place-items-center rounded-3xl border border-white/10 bg-white/5"><UserRound size={46} className="text-zinc-500"/></div>}<label className="absolute -bottom-2 -right-2 grid h-10 w-10 cursor-pointer place-items-center rounded-full bg-violet-500 shadow-lg"><Camera size={18}/><input type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadAvatar} disabled={uploading} className="hidden"/></label></div><div><p className="text-sm text-violet-300">Mi cuenta</p><h1 className="text-4xl font-black">{profile.username}</h1><p className="mt-1 text-zinc-500">{profile.email}</p></div></div>
+      <div className="mb-8 flex flex-col items-center gap-5 sm:flex-row sm:items-end"><div className="flex flex-col items-center gap-2"><div className="relative">{profile.avatar_url?<img src={profile.avatar_url} alt="Foto de perfil" className="h-28 w-28 rounded-3xl border border-white/15 object-cover"/>:<div className="grid h-28 w-28 place-items-center rounded-3xl border border-white/10 bg-white/5"><UserRound size={46} className="text-zinc-500"/></div>}<label className="absolute -bottom-2 -right-2 grid h-10 w-10 cursor-pointer place-items-center rounded-full bg-violet-500 shadow-lg"><Camera size={18}/><input type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadAvatar} disabled={uploading} className="hidden"/></label></div>{profile.is_premium&&(!profile.premium_until||new Date(profile.premium_until)>new Date())&&<span className="flex items-center gap-1 rounded-full bg-gradient-to-r from-amber-300 to-yellow-500 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-black"><Crown size={11}/> Premium</span>}</div><div><p className="text-sm text-violet-300">Mi cuenta</p><h1 className="text-4xl font-black">{profile.username}</h1><p className="mt-1 text-zinc-500">{profile.email}</p></div></div>
       {(message || error) && <div className={`mb-6 flex items-center gap-2 rounded-xl border p-4 text-sm ${error?'border-red-400/20 bg-red-400/10 text-red-300':'border-emerald-400/20 bg-emerald-400/10 text-emerald-300'}`}>{!error&&<Check size={17}/>} {error || message}</div>}
       <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
         <form onSubmit={saveProfile} className="rounded-3xl border border-white/10 bg-white/[.04] p-6"><h2 className="text-xl font-bold">Datos personales</h2><div className="mt-5 space-y-4"><label className="block text-sm text-zinc-400">Nombre de usuario<input value={profile.username} onChange={e=>setProfile({...profile,username:e.target.value})} maxLength={24} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/30 px-4 text-white outline-none focus:border-violet-400"/></label><label className="block text-sm text-zinc-400">Fecha de nacimiento<input type="date" max={new Date().toISOString().slice(0,10)} value={profile.birth_date || ''} onChange={e=>setProfile({...profile,birth_date:e.target.value})} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/30 px-4 text-white outline-none focus:border-violet-400"/></label><label className="block text-sm text-zinc-400">Sexo<select value={profile.gender || ''} onChange={e=>setProfile({...profile,gender:e.target.value})} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-[#0c0d13] px-4 text-white outline-none focus:border-violet-400">{genderOptions.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label></div><button disabled={saving} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-500 py-3 font-bold disabled:opacity-50"><Save size={17}/> {saving?'Guardando…':'Guardar perfil'}</button></form>

@@ -3,7 +3,7 @@
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import Link from 'next/link';
-import { Accessibility, Award, BarChart3, BookOpen, ChevronRight, Clock3, Edit3, Flame, Gauge, Heart, Keyboard, Medal, Merge, Music2, Pause, Play, Redo2, RotateCcw, Scissors, Search, Settings2, Sparkles, Star, Target, Trophy, Undo2, UserRound, X } from 'lucide-react';
+import { Accessibility, Award, BarChart3, BookOpen, ChevronRight, Clock3, Crown, Edit3, Flame, Gamepad2, Gauge, Heart, Keyboard, Medal, Merge, Music2, Pause, Play, Redo2, RotateCcw, Scissors, Search, Settings2, Sparkles, Star, Target, Trophy, Undo2, UserRound, X } from 'lucide-react';
 import type { LyricsResponse, SyncedLyric, TrackDetails } from '@/components/types';
 import { difficultyFor, GameMode, MODE_INFO, normalizeText, rankFor } from '@/lib/game';
 import { supabase } from '@/lib/supabase';
@@ -13,7 +13,7 @@ type LineResult = { index: number; text: string; typed: string; status: 'perfect
 type Result = { score: number; accuracy: number; wpm: number; maxCombo: number; rank: string; lines: LineResult[]; challengeBonus: number };
 type Stats = { games: number; totalScore: number; bestWpm: number; bestAccuracy: number; streak: number; lastDay: string };
 type Ranking = { username: string; score: number; wpm: number; accuracy: number; max_combo: number; rank: string; mode: GameMode };
-type HeaderProfile = { username: string; avatar_url: string | null };
+type HeaderProfile = { username: string; avatar_url: string | null; is_premium: boolean; premium_until: string | null };
 
 const EMPTY_STATS: Stats = { games: 0, totalScore: 0, bestWpm: 0, bestAccuracy: 0, streak: 0, lastDay: '' };
 const LS = { history: 'ttl-history-v2', favorites: 'ttl-favorites-v2', stats: 'ttl-stats-v2', edits: 'ttl-edits-v2', settings: 'ttl-settings-v2' };
@@ -86,8 +86,8 @@ export default function Home() {
     const loadProfile = async (user: User | null) => {
       setAuthUser(user);
       if (!user) { setHeaderProfile(null); return; }
-      const { data } = await supabase.from('users').select('username,avatar_url').eq('id', user.id).maybeSingle();
-      setHeaderProfile(data || { username: user.user_metadata?.username || user.email?.split('@')[0] || 'Jugador', avatar_url: null });
+      const { data } = await supabase.from('users').select('username,avatar_url,is_premium,premium_until').eq('id', user.id).maybeSingle();
+      setHeaderProfile(data || { username: user.user_metadata?.username || user.email?.split('@')[0] || 'Jugador', avatar_url: null, is_premium: false, premium_until: null });
     };
     void supabase.auth.getUser().then(({ data }) => loadProfile(data.user));
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => { void loadProfile(session?.user || null); });
@@ -266,7 +266,7 @@ export default function Home() {
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4">
         <button onClick={() => setTab('play')} className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-cyan-400 shadow-lg shadow-violet-500/20"><Keyboard /></span><span className="text-xl font-black tracking-tight">TypeTheLyrics</span></button>
         <nav className="flex gap-1 rounded-xl bg-white/5 p-1 text-sm">{([['play','Jugar',Music2],['library','Canciones',BookOpen],['progress','Progreso',BarChart3]] as const).map(([key,label,Icon]) => <button key={key} onClick={() => setTab(key)} className={`flex items-center gap-2 rounded-lg px-3 py-2 ${tab === key ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}><Icon size={16}/><span className="hidden sm:inline">{label}</span></button>)}</nav>
-        <div className="flex gap-2"><button onClick={() => setSettingsOpen(true)} aria-label="Configuración" className="rounded-xl border border-white/10 p-2 text-zinc-300 hover:bg-white/5"><Settings2 size={18}/></button><Link href={authUser ? '/account' : '/auth'} className="flex max-w-[170px] items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm text-zinc-300 hover:bg-white/5">{headerProfile?.avatar_url?<img src={headerProfile.avatar_url} alt="" className="h-5 w-5 rounded-full object-cover"/>:<UserRound size={16}/>} <span className="hidden truncate sm:inline">{authUser ? headerProfile?.username || 'Mi cuenta' : 'Entrar'}</span></Link></div>
+        <div className="flex gap-2"><Link href="/multiplayer" className="flex items-center gap-2 rounded-xl border border-violet-400/20 bg-violet-400/10 px-3 py-2 text-sm text-violet-200 hover:bg-violet-400/20"><Gamepad2 size={17}/><span className="hidden sm:inline">Multijugador</span></Link><button onClick={() => setSettingsOpen(true)} aria-label="Configuración" className="rounded-xl border border-white/10 p-2 text-zinc-300 hover:bg-white/5"><Settings2 size={18}/></button><Link href={authUser ? '/account' : '/auth'} className="flex max-w-[190px] items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm text-zinc-300 hover:bg-white/5">{headerProfile?.avatar_url?<img src={headerProfile.avatar_url} alt="" className="h-6 w-6 rounded-full object-cover"/>:<UserRound size={16}/>} <span className="hidden min-w-0 sm:block"><span className="block truncate">{authUser ? headerProfile?.username || 'Mi cuenta' : 'Entrar'}</span>{headerProfile?.is_premium&&(!headerProfile.premium_until||new Date(headerProfile.premium_until)>new Date())&&<span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-amber-300"><Crown size={9}/> Premium</span>}</span></Link></div>
       </div>
     </header>
 

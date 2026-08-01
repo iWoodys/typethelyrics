@@ -103,6 +103,10 @@ create index if not exists game_results_user_created_idx on public.game_results 
 alter table public.users add column if not exists avatar_url text;
 alter table public.users add column if not exists birth_date date;
 alter table public.users add column if not exists gender text;
+alter table public.users add column if not exists is_premium boolean not null default false;
+alter table public.users add column if not exists premium_until timestamptz;
+revoke update on public.users from authenticated;
+grant update (username, avatar_url, birth_date, gender, score) on public.users to authenticated;
 alter table public.game_results add column if not exists track_title text not null default 'Canción';
 alter table public.game_results add column if not exists track_artist text not null default '';
 alter table public.game_results add column if not exists image_url text;
@@ -142,3 +146,114 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
+
+-- Multiplayer ---------------------------------------------------------------
+create table if not exists public.lobbies (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique check (code ~ '^[A-Z0-9]{6}$'),
+  host_id uuid not null references public.users(id) on delete cascade,
+  status text not null default 'waiting' check (status in ('waiting', 'countdown', 'playing', 'finished')),
+  spotify_track_id text, track_url text, track_title text, track_artist text, image_url text,
+  duration_ms integer, lyrics jsonb not null default '[]'::jsonb, start_at timestamptz,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+
+create table if not exists public.lobby_players (
+  lobby_id uuid not null references public.lobbies(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  ready boolean not null default false,
+  score integer not null default 0, accuracy numeric(5,2) not null default 0,
+  wpm integer not null default 0, max_combo integer not null default 0,
+  finished_at timestamptz, joined_at timestamptz not null default now(),
+  primary key (lobby_id, user_id)
+);
+
+alter table public.lobbies enable row level security;
+alter table public.lobby_players enable row level security;
+drop policy if exists "Authenticated users find lobbies" on public.lobbies;
+create policy "Authenticated users find lobbies" on public.lobbies for select to authenticated using (true);
+drop policy if exists "Players view lobby members" on public.lobby_players;
+create policy "Players view lobby members" on public.lobby_players for select to authenticated using (true);
+
+create or replace function public.create_lobby()
+returns public.lobbies language plpgsql security definer set search_path = public as $$
+declare room public.lobbies; premium boolean;
+begin
+  select (is_premium and (premium_until is null or premium_until > now())) into premium from public.users where id = auth.uid();
+  if not coalesce(premium, false) then raise exception 'Solo los usuarios Premium pueden crear salas.'; end if;
+  insert into public.lobbies (code, host_id)
+  values (upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6)), auth.uid()) returning * into room;
+  insert into public.lobby_players (lobby_id, user_id, ready) values (room.id, auth.uid(), true);
+  return room;
+end; $$;
+
+create or replace function public.join_lobby(room_code text)
+returns public.lobbies language plpgsql security definer set search_path = public as $$
+declare room public.lobbies;
+begin
+  select * into room from public.lobbies where code = upper(trim(room_code)) and status = 'waiting';
+  if room.id is null then raise exception 'La sala no existe o ya comenzó.'; end if;
+  if (select count(*) from public.lobby_players where lobby_id = room.id) >= 8
+     and not exists (select 1 from public.lobby_players where lobby_id = room.id and user_id = auth.uid())
+  then raise exception 'La sala está completa.'; end if;
+  insert into public.lobby_players (lobby_id, user_id) values (room.id, auth.uid()) on conflict do nothing;
+  return room;
+end; $$;
+
+create or replace function public.set_lobby_ready(target_lobby uuid, is_ready boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin update public.lobby_players set ready = is_ready where lobby_id = target_lobby and user_id = auth.uid(); end; $$;
+
+create or replace function public.configure_lobby(target_lobby uuid, new_track_id text, new_track_url text,
+  new_title text, new_artist text, new_image text, new_duration integer, new_lyrics jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.lobbies set spotify_track_id = new_track_id, track_url = new_track_url, track_title = new_title,
+    track_artist = new_artist, image_url = new_image, duration_ms = new_duration, lyrics = new_lyrics, updated_at = now()
+  where id = target_lobby and host_id = auth.uid() and status = 'waiting';
+  if not found then raise exception 'Solo el anfitrión puede elegir la canción.'; end if;
+  update public.lobby_players set ready = (user_id = auth.uid()), score = 0, accuracy = 0, wpm = 0,
+    max_combo = 0, finished_at = null where lobby_id = target_lobby;
+end; $$;
+
+create or replace function public.start_lobby(target_lobby uuid)
+returns timestamptz language plpgsql security definer set search_path = public as $$
+declare begins timestamptz := now() + interval '5 seconds';
+begin
+  if exists (select 1 from public.lobby_players where lobby_id = target_lobby and ready = false) then
+    raise exception 'Todos los jugadores deben estar listos.'; end if;
+  update public.lobbies set status = 'countdown', start_at = begins, updated_at = now()
+  where id = target_lobby and host_id = auth.uid() and spotify_track_id is not null and status = 'waiting';
+  if not found then raise exception 'No se puede iniciar esta sala.'; end if;
+  return begins;
+end; $$;
+
+create or replace function public.mark_lobby_playing(target_lobby uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin update public.lobbies set status = 'playing', updated_at = now()
+  where id = target_lobby and status = 'countdown' and start_at <= now(); end; $$;
+
+create or replace function public.submit_lobby_result(target_lobby uuid, final_score integer,
+  final_accuracy numeric, final_wpm integer, final_combo integer)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.lobby_players set score = greatest(0, final_score), accuracy = least(100, greatest(0, final_accuracy)),
+    wpm = greatest(0, final_wpm), max_combo = greatest(0, final_combo), finished_at = now()
+  where lobby_id = target_lobby and user_id = auth.uid();
+  if not found then raise exception 'No pertenecés a esta sala.'; end if;
+  if not exists (select 1 from public.lobby_players where lobby_id = target_lobby and finished_at is null) then
+    update public.lobbies set status = 'finished', updated_at = now() where id = target_lobby;
+  end if;
+end; $$;
+
+grant execute on function public.create_lobby() to authenticated;
+grant execute on function public.join_lobby(text) to authenticated;
+grant execute on function public.set_lobby_ready(uuid, boolean) to authenticated;
+grant execute on function public.configure_lobby(uuid, text, text, text, text, text, integer, jsonb) to authenticated;
+grant execute on function public.start_lobby(uuid) to authenticated;
+grant execute on function public.mark_lobby_playing(uuid) to authenticated;
+grant execute on function public.submit_lobby_result(uuid, integer, numeric, integer, integer) to authenticated;
+create index if not exists lobbies_code_idx on public.lobbies(code);
+create index if not exists lobby_players_score_idx on public.lobby_players(lobby_id, score desc);
+do $$ begin alter publication supabase_realtime add table public.lobbies; exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table public.lobby_players; exception when duplicate_object then null; end $$;
