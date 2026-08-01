@@ -1,0 +1,2 @@
+"use client";
+export default function ErrorPage({ reset }: { error: Error & { digest?: string }; reset: () => void }) { return <main className="grid min-h-screen place-items-center bg-[#07080d] p-6 text-center text-white"><div><h1 className="text-3xl font-black">Algo salió mal</h1><p className="mt-3 text-zinc-400">Tu progreso local sigue seguro. Podés intentar cargar la aplicación otra vez.</p><button onClick={reset} className="mt-6 rounded-xl bg-violet-500 px-6 py-3 font-bold">Reintentar</button></div></main>; }
