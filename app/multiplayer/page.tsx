@@ -244,9 +244,9 @@ export default function MultiplayerPage() {
   const lyrics = useMemo(() => lobby?.lyrics || [], [lobby?.lyrics]);
   const timedIndex = useMemo(() => { let found = 0; lyrics.forEach((line, index) => { if (gamePosition >= line.startTimeMs) found = index; }); return found; }, [gamePosition, lyrics]);
   const currentLine = lyrics[lineIndex];
-  const target = currentLine ? normalizeText(currentLine.words, false, true, true) : '';
+  const target = currentLine ? normalizeText(currentLine.words, false, true, false) : '';
   const visibleTyped = typedLineIndex === lineIndex ? typed : '';
-  const normalizedTyped = normalizeText(visibleTyped, false, true, true);
+  const normalizedTyped = normalizeText(visibleTyped, false, true, false);
   const singerStarted = !!currentLine && gamePosition >= currentLine.startTimeMs;
   const lineWaitMs = currentLine ? Math.max(0, currentLine.startTimeMs - gamePosition) : 0;
   const canType = !!startedAt && countdown === 0 && singerStarted && !localFinished && lineIndex <= timedIndex;
@@ -316,7 +316,7 @@ export default function MultiplayerPage() {
 
   const typeLine = (value: string) => {
     if (!canType || !currentLine) return;
-    const normalized = normalizeText(value, false, true, true);
+    const normalized = normalizeText(value, false, true, false);
     if (normalized.length > lastTypedLength.current) {
       const at = normalized.length - 1;
       if (normalized[at] === target[at]) setCorrect(old => old + 1); else { setMistakes(old => old + 1); setCombo(0); }

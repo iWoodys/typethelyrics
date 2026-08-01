@@ -45,7 +45,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lowercase, setLowercase] = useState(true);
-  const [noPunctuation, setNoPunctuation] = useState(true);
+  const [noPunctuation, setNoPunctuation] = useState(false);
   const [history, setHistory] = useState<SongCard[]>([]);
   const [favorites, setFavorites] = useState<SongCard[]>([]);
   const [stats, setStats] = useState<Stats>(EMPTY_STATS);
