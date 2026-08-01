@@ -265,6 +265,21 @@ begin
   if not found then raise exception 'No se pudo actualizar el progreso de esta partida.'; end if;
 end; $$;
 
+create or replace function public.reset_lobby(target_lobby uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare room public.lobbies%rowtype;
+begin
+  select * into room from public.lobbies
+  where id = target_lobby and status in ('waiting', 'finished')
+    and exists (select 1 from public.lobby_players where lobby_id = target_lobby and user_id = auth.uid());
+  if not found then raise exception 'No se puede volver a esta lobby.'; end if;
+  update public.lobbies set status = 'waiting', spotify_track_id = null, track_url = null,
+    track_title = null, track_artist = null, image_url = null, duration_ms = null,
+    lyrics = '[]'::jsonb, start_at = null, updated_at = now() where id = target_lobby;
+  update public.lobby_players set ready = (user_id = room.host_id), score = 0, accuracy = 0,
+    wpm = 0, max_combo = 0, finished_at = null where lobby_id = target_lobby;
+end; $$;
+
 grant execute on function public.create_lobby() to authenticated;
 grant execute on function public.join_lobby(text) to authenticated;
 grant execute on function public.set_lobby_ready(uuid, boolean) to authenticated;
@@ -273,6 +288,7 @@ grant execute on function public.start_lobby(uuid) to authenticated;
 grant execute on function public.mark_lobby_playing(uuid) to authenticated;
 grant execute on function public.submit_lobby_result(uuid, integer, numeric, integer, integer) to authenticated;
 grant execute on function public.update_lobby_progress(uuid, integer, numeric, integer, integer) to authenticated;
+grant execute on function public.reset_lobby(uuid) to authenticated;
 create index if not exists lobbies_code_idx on public.lobbies(code);
 create index if not exists lobby_players_score_idx on public.lobby_players(lobby_id, score desc);
 do $$ begin alter publication supabase_realtime add table public.lobbies; exception when duplicate_object then null; end $$;
