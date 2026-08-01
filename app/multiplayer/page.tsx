@@ -33,7 +33,6 @@ export default function MultiplayerPage() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [countdown, setCountdown] = useState<number|null>(null);
-  const [position, setPosition] = useState(0);
   const [typed, setTyped] = useState('');
   const [typedLineIndex, setTypedLineIndex] = useState(0);
   const [lineIndex, setLineIndex] = useState(0);
@@ -219,18 +218,13 @@ export default function MultiplayerPage() {
 
   const sendPlayer = useCallback((command: string) => iframeRef.current?.contentWindow?.postMessage({ command }, '*'), []);
   useEffect(() => {
-    const listener = (event: MessageEvent) => { if (event.origin === 'https://open.spotify.com' && event.data?.type === 'playback_update') setPosition(event.data.payload?.position || 0); };
-    window.addEventListener('message', listener); return () => window.removeEventListener('message', listener);
-  }, []);
-
-  useEffect(() => {
     if (!lobby?.start_at || !['countdown','playing'].includes(lobby.status)) return;
     const tick = () => {
       const remaining = new Date(lobby.start_at!).getTime() - Date.now();
       setCountdown(remaining > 0 ? Math.ceil(remaining / 1000) : 0);
       if (remaining <= 0 && !startedAt) {
         setLineIndex(0); setTypedLineIndex(0); setTyped(''); setLineFeedback(null);
-        setStartedAt(new Date(lobby.start_at!).getTime()); sendPlayer('play');
+        setStartedAt(new Date(lobby.start_at!).getTime()); sendPlayer('restart'); sendPlayer('play');
         void supabase.rpc('mark_lobby_playing', { target_lobby: lobby.id });
       }
     };
@@ -244,7 +238,9 @@ export default function MultiplayerPage() {
   }, [localFinished, startedAt]);
 
   const wallPosition = startedAt ? Math.max(0, clock - startedAt) : 0;
-  const gamePosition = position > 500 ? position : wallPosition;
+  // El reloj compartido manda: una pausa o reinicio local de Spotify nunca puede
+  // atrasar las letras ni extender la partida para un solo jugador.
+  const gamePosition = wallPosition;
   const lyrics = useMemo(() => lobby?.lyrics || [], [lobby?.lyrics]);
   const timedIndex = useMemo(() => { let found = 0; lyrics.forEach((line, index) => { if (gamePosition >= line.startTimeMs) found = index; }); return found; }, [gamePosition, lyrics]);
   const currentLine = lyrics[lineIndex];

@@ -241,7 +241,8 @@ begin
     wpm = greatest(0, final_wpm), max_combo = greatest(0, final_combo), finished_at = now()
   where lobby_id = target_lobby and user_id = auth.uid();
   if not found then raise exception 'No pertenecés a esta sala.'; end if;
-  if not exists (select 1 from public.lobby_players where lobby_id = target_lobby and finished_at is null) then
+  if exists (select 1 from public.lobbies where id = target_lobby and host_id = auth.uid())
+     or not exists (select 1 from public.lobby_players where lobby_id = target_lobby and finished_at is null) then
     update public.lobbies set status = 'finished', updated_at = now() where id = target_lobby;
   end if;
 end; $$;
