@@ -21,7 +21,6 @@ function Avatar({ profile, size = 'md' }: { profile: Profile; size?: 'sm'|'md'|'
     {premiumActive(profile) && <span className="rounded-full bg-gradient-to-r from-amber-300 to-yellow-500 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-black">Premium</span>}
   </div>;
 }
-
 export default function MultiplayerPage() {
   const [authUser, setAuthUser] = useState<User|null>(null);
   const [profile, setProfile] = useState<Profile|null>(null);
@@ -36,6 +35,9 @@ export default function MultiplayerPage() {
   const [countdown, setCountdown] = useState<number|null>(null);
   const [position, setPosition] = useState(0);
   const [typed, setTyped] = useState('');
+  const [typedLineIndex, setTypedLineIndex] = useState(0);
+  const [lineIndex, setLineIndex] = useState(0);
+  const [lineFeedback, setLineFeedback] = useState<'correct'|'missed'|null>(null);
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
@@ -45,9 +47,13 @@ export default function MultiplayerPage() {
   const [clock, setClock] = useState(Date.now());
   const [localFinished, setLocalFinished] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const feedbackTimer = useRef<number|null>(null);
   const submittedRef = useRef(false);
   const lastLineRef = useRef(0);
   const lastTypedLength = useRef(0);
+  const lastProgressRef = useRef('');
+  const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
 
   const loadRoom = useCallback(async (roomId: string) => {
     const [{ data: room }, { data: memberRows }] = await Promise.all([
@@ -195,6 +201,7 @@ export default function MultiplayerPage() {
       const remaining = new Date(lobby.start_at!).getTime() - Date.now();
       setCountdown(remaining > 0 ? Math.ceil(remaining / 1000) : 0);
       if (remaining <= 0 && !startedAt) {
+        setLineIndex(0); setTypedLineIndex(0); setTyped(''); setLineFeedback(null);
         setStartedAt(new Date(lobby.start_at!).getTime()); sendPlayer('play');
         void supabase.rpc('mark_lobby_playing', { target_lobby: lobby.id });
       }
@@ -211,14 +218,33 @@ export default function MultiplayerPage() {
   const wallPosition = startedAt ? Math.max(0, clock - startedAt) : 0;
   const gamePosition = position > 500 ? position : wallPosition;
   const lyrics = useMemo(() => lobby?.lyrics || [], [lobby?.lyrics]);
-  const lineIndex = useMemo(() => { let found = 0; lyrics.forEach((line, index) => { if (gamePosition >= line.startTimeMs) found = index; }); return found; }, [gamePosition, lyrics]);
+  const timedIndex = useMemo(() => { let found = 0; lyrics.forEach((line, index) => { if (gamePosition >= line.startTimeMs) found = index; }); return found; }, [gamePosition, lyrics]);
   const currentLine = lyrics[lineIndex];
   const target = currentLine ? normalizeText(currentLine.words, false, true, true) : '';
+  const visibleTyped = typedLineIndex === lineIndex ? typed : '';
+  const normalizedTyped = normalizeText(visibleTyped, false, true, true);
+  const singerStarted = !!currentLine && gamePosition >= currentLine.startTimeMs;
+  const lineWaitMs = currentLine ? Math.max(0, currentLine.startTimeMs - gamePosition) : 0;
+  const canType = !!startedAt && countdown === 0 && singerStarted && !localFinished && lineIndex <= timedIndex;
+  const currentWord = useMemo(() => {
+    if (!currentLine) return -1;
+    const next = lyrics[lineIndex + 1]?.startTimeMs || currentLine.startTimeMs + 5000;
+    const ratio = Math.max(0, Math.min(0.999, (gamePosition - currentLine.startTimeMs) / Math.max(1, next - currentLine.startTimeMs)));
+    return Math.floor(ratio * currentLine.words.split(/\s+/).length);
+  }, [currentLine, gamePosition, lineIndex, lyrics]);
+  const showLineFeedback = useCallback((type: 'correct'|'missed') => {
+    setLineFeedback(type);
+    if (feedbackTimer.current) window.clearTimeout(feedbackTimer.current);
+    feedbackTimer.current = window.setTimeout(() => setLineFeedback(null), 700);
+  }, []);
+  useEffect(() => { if (canType) inputRef.current?.focus(); }, [canType, lineIndex]);
 
   useEffect(() => {
-    if (!startedAt || localFinished || lineIndex <= lastLineRef.current) return;
-    setMistakes(value => value + (lineIndex - lastLineRef.current)); setCombo(0); setTyped(''); lastTypedLength.current = 0; lastLineRef.current = lineIndex;
-  }, [lineIndex, localFinished, startedAt]);
+    if (!startedAt || localFinished || timedIndex <= lineIndex) return;
+    const missed = timedIndex - lineIndex;
+    setMistakes(value => value + missed); setCombo(0); setTyped(''); setTypedLineIndex(timedIndex);
+    setLineIndex(timedIndex); showLineFeedback('missed'); lastTypedLength.current = 0; lastLineRef.current = timedIndex;
+  }, [lineIndex, localFinished, showLineFeedback, startedAt, timedIndex]);
 
   const finish = useCallback(async () => {
     if (!lobby || submittedRef.current) return; submittedRef.current = true;
@@ -230,21 +256,45 @@ export default function MultiplayerPage() {
     if (rpcError) setError(rpcError.message); await loadRoom(lobby.id);
   }, [correct, lobby, loadRoom, maxCombo, mistakes, score, sendPlayer, startedAt]);
 
+  const liveAccuracy = correct + mistakes ? correct / (correct + mistakes) * 100 : 100;
+  const liveMinutes = Math.max((Date.now() - startedAt) / 60000, 1 / 60);
+  liveStatsRef.current = { score, accuracy: liveAccuracy, wpm: Math.round(correct / 5 / liveMinutes), combo: maxCombo };
+
+  useEffect(() => {
+    if (!lobby || !startedAt || localFinished) return;
+    const publish = () => {
+      const stats = liveStatsRef.current;
+      const signature = `${stats.score}:${stats.accuracy.toFixed(1)}:${stats.wpm}:${stats.combo}`;
+      if (signature === lastProgressRef.current) return;
+      lastProgressRef.current = signature;
+      void supabase.rpc('update_lobby_progress', {
+        target_lobby: lobby.id,
+        current_score: stats.score,
+        current_accuracy: stats.accuracy,
+        current_wpm: stats.wpm,
+        current_combo: stats.combo,
+      });
+    };
+    publish();
+    const timer = window.setInterval(publish, 1000);
+    return () => window.clearInterval(timer);
+  }, [lobby, localFinished, startedAt]);
+
   useEffect(() => { if (startedAt && lobby?.duration_ms && gamePosition >= lobby.duration_ms - 500) void finish(); }, [finish, gamePosition, lobby?.duration_ms, startedAt]);
 
   const typeLine = (value: string) => {
-    if (!startedAt || localFinished || !currentLine) return;
+    if (!canType || !currentLine) return;
     const normalized = normalizeText(value, false, true, true);
     if (normalized.length > lastTypedLength.current) {
       const at = normalized.length - 1;
       if (normalized[at] === target[at]) setCorrect(old => old + 1); else { setMistakes(old => old + 1); setCombo(0); }
     }
-    lastTypedLength.current = normalized.length; setTyped(value);
+    lastTypedLength.current = normalized.length; setTypedLineIndex(lineIndex); setTyped(value);
     if (normalized === target) {
       const nextCombo = combo + 1; setCombo(nextCombo); setMaxCombo(old => Math.max(old, nextCombo));
       setScore(old => old + target.length * 10 + 300 + Math.min(900, nextCombo * 30));
-      setTyped(''); lastTypedLength.current = 0; lastLineRef.current = lineIndex + 1;
-      if (lineIndex >= lyrics.length - 1) void finish();
+      showLineFeedback('correct'); setTyped(''); lastTypedLength.current = 0; lastLineRef.current = lineIndex + 1;
+      if (lineIndex >= lyrics.length - 1) void finish(); else { setTypedLineIndex(lineIndex + 1); setLineIndex(index => index + 1); }
     }
   };
 
@@ -261,5 +311,5 @@ export default function MultiplayerPage() {
   if (showResults) return <main className="min-h-screen bg-[#07080d] p-4 text-white"><div className="mx-auto max-w-3xl py-10"><Trophy className="mx-auto text-amber-300" size={58}/><h1 className="mt-3 text-center text-4xl font-black">Resultados</h1><p className="mt-2 text-center text-zinc-400">{lobby.track_title}</p><div className="mt-8 space-y-3">{sortedPlayers.map((player,index)=><div key={player.user_id} className={`grid grid-cols-[45px_1fr_auto] items-center gap-3 rounded-2xl border p-4 ${index===0?'border-amber-300/40 bg-amber-300/10':'border-white/10 bg-white/[.04]'}`}><b className="text-xl">#{index+1}</b><div className="flex items-center gap-3"><Avatar profile={player.users} size="sm"/><div><b>{player.users.username}</b><p className="text-xs text-zinc-500">{player.finished_at?`${player.wpm} ppm · ${player.accuracy}%`:'Jugando…'}</p></div></div><div className="text-right"><b className="text-xl text-violet-300">{player.score.toLocaleString()}</b><p className="text-xs text-zinc-500">{rankFor(player.score,player.accuracy)}</p></div></div>)}</div><Link href="/multiplayer" className="mt-7 block rounded-xl bg-white py-3 text-center font-bold text-black">Volver a multijugador</Link></div></main>;
 
   const inGame = lobby.status !== 'waiting';
-  return <main className="min-h-screen bg-[#07080d] p-4 text-white"><div className="mx-auto max-w-6xl py-6"><header className="flex flex-wrap items-center justify-between gap-3"><Link href="/" className="font-bold">TypeTheLyrics</Link><div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2"><Radio size={15} className="text-emerald-300"/><span className="text-xs text-zinc-400">SALA</span><b className="tracking-[.2em]">{lobby.code}</b><button onClick={()=>{void navigator.clipboard.writeText(`${location.origin}/multiplayer?room=${lobby.code}`);setCopied(true);}} aria-label="Copiar invitación"><Copy size={15}/></button>{copied&&<span className="text-xs text-emerald-300">Copiado</span>}</div></header>{error&&<p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-red-300">{error}</p>}<div className="mt-6 grid gap-5 lg:grid-cols-[1fr_320px]"><section className="rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7">{lobby.spotify_track_id&&<iframe ref={iframeRef} title="Spotify" src={`https://open.spotify.com/embed/track/${lobby.spotify_track_id}?theme=0`} width="100%" height="152" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" className="rounded-xl"/>}{!inGame&&lobby.host_id===authUser.id&&<form onSubmit={configureSong} className="mt-5"><label className="text-sm text-zinc-400">Canción para la sala<input value={songUrl} onChange={event=>setSongUrl(event.target.value)} placeholder="Pegá un enlace de Spotify" className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/30 px-4 outline-none focus:border-violet-400"/></label><button disabled={working} className="mt-3 w-full rounded-xl bg-violet-500 py-3 font-bold">{working?'Cargando letras…':'Elegir canción'}</button></form>}{!inGame&&lobby.host_id!==authUser.id&&!lobby.track_title&&<div className="grid min-h-64 place-items-center text-center text-zinc-500">El anfitrión está eligiendo una canción…</div>}{!inGame&&lobby.track_title&&<div className="mt-5 flex items-center justify-between gap-3"><div><h2 className="text-2xl font-black">{lobby.track_title}</h2><p className="text-zinc-400">{lobby.track_artist}</p></div>{lobby.host_id===authUser.id?<button disabled={!allReady} onClick={startLobby} className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30"><Play size={18}/> Iniciar</button>:<button onClick={toggleReady} className={`rounded-xl px-5 py-3 font-black ${me?.ready?'bg-emerald-400 text-black':'bg-white text-black'}`}>{me?.ready?'¡Listo!':'Estoy listo'}</button>}</div>}{inGame&&<div className="mt-6">{countdown!==null&&countdown>0?<div className="grid min-h-72 place-items-center text-center"><div><p className="text-zinc-400">La partida comienza en</p><b className="text-8xl font-black text-violet-300">{countdown}</b><p className="mt-4 text-sm text-amber-200">Presioná Play en Spotify durante la cuenta regresiva.</p></div></div>:<><div className="mb-4 flex items-center justify-between text-sm"><span className="text-zinc-400">Puntuación <b className="text-white">{score.toLocaleString()}</b></span><span className="text-zinc-400">Combo <b className="text-cyan-300">{combo}x</b></span></div><div className="rounded-2xl border border-violet-400/20 bg-black/25 p-6 text-center"><p className="text-2xl font-bold leading-relaxed">{currentLine?.words||'Preparando la letra…'}</p><input autoFocus value={typed} onChange={event=>typeLine(event.target.value)} className="mt-6 h-14 w-full rounded-xl border border-white/10 bg-black/40 px-4 text-center text-xl outline-none focus:border-violet-400" placeholder="Escribí cuando empiece a cantar…"/></div></>}</div>}</section><aside className="rounded-3xl border border-white/10 bg-white/[.04] p-5"><div className="flex items-center justify-between"><h2 className="font-bold">Jugadores</h2><span className="rounded-full bg-white/5 px-2 py-1 text-xs">{players.length}/8</span></div><div className="mt-4 space-y-3">{players.map(player=><div key={player.user_id} className="flex items-center gap-3 rounded-2xl border border-white/5 bg-black/20 p-3"><Avatar profile={player.users} size="sm"/><div className="min-w-0 flex-1"><b className="block truncate">{player.users.username}</b><span className="text-xs text-zinc-500">{player.user_id===lobby.host_id?'Anfitrión':player.ready?'Listo':'Preparándose'}</span></div>{player.ready&&<span className="h-2 w-2 rounded-full bg-emerald-400"/>}</div>)}</div></aside></div></div></main>;
+  return <main className="min-h-screen bg-[#07080d] p-4 text-white"><div className="mx-auto max-w-6xl py-6"><header className="flex flex-wrap items-center justify-between gap-3"><Link href="/" className="font-bold">TypeTheLyrics</Link><div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2"><Radio size={15} className="text-emerald-300"/><span className="text-xs text-zinc-400">SALA</span><b className="tracking-[.2em]">{lobby.code}</b><button onClick={()=>{void navigator.clipboard.writeText(`${location.origin}/multiplayer?room=${lobby.code}`);setCopied(true);}} aria-label="Copiar invitación"><Copy size={15}/></button>{copied&&<span className="text-xs text-emerald-300">Copiado</span>}</div></header>{error&&<p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-red-300">{error}</p>}<div className="mt-6 grid gap-5 lg:grid-cols-[1fr_320px]"><section className="rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7">{lobby.spotify_track_id&&<iframe ref={iframeRef} title="Spotify" src={`https://open.spotify.com/embed/track/${lobby.spotify_track_id}?theme=0`} width="100%" height="152" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" className="rounded-xl"/>}{!inGame&&lobby.host_id===authUser.id&&<form onSubmit={configureSong} className="mt-5"><label className="text-sm text-zinc-400">Canción para la sala<input value={songUrl} onChange={event=>setSongUrl(event.target.value)} placeholder="Pegá un enlace de Spotify" className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/30 px-4 outline-none focus:border-violet-400"/></label><button disabled={working} className="mt-3 w-full rounded-xl bg-violet-500 py-3 font-bold">{working?'Cargando letras…':'Elegir canción'}</button></form>}{!inGame&&lobby.host_id!==authUser.id&&!lobby.track_title&&<div className="grid min-h-64 place-items-center text-center text-zinc-500">El anfitrión está eligiendo una canción…</div>}{!inGame&&lobby.track_title&&<div className="mt-5 flex items-center justify-between gap-3"><div><h2 className="text-2xl font-black">{lobby.track_title}</h2><p className="text-zinc-400">{lobby.track_artist}</p></div>{lobby.host_id===authUser.id?<button disabled={!allReady} onClick={startLobby} className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30"><Play size={18}/> Iniciar</button>:<button onClick={toggleReady} className={`rounded-xl px-5 py-3 font-black ${me?.ready?'bg-emerald-400 text-black':'bg-white text-black'}`}>{me?.ready?'¡Listo!':'Estoy listo'}</button>}</div>}{inGame&&<div className="mt-6">{countdown!==null&&countdown>0?<div className="grid min-h-72 place-items-center text-center"><div><p className="text-zinc-400">La partida comienza en</p><b className="text-8xl font-black text-violet-300">{countdown}</b><p className="mt-4 text-sm text-amber-200">Presioná Play en Spotify durante la cuenta regresiva.</p></div></div>:<><div className="mb-4 flex items-center justify-between text-sm"><span className="text-zinc-400">Puntuación <b className="text-white">{score.toLocaleString()}</b></span><span className="text-zinc-400">Combo <b className="text-cyan-300">{combo}x</b></span></div><div onClick={()=>inputRef.current?.focus()} className={`relative min-h-[330px] cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] p-6 text-center transition-all duration-200 sm:p-10 ${lineFeedback==='correct'?'border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]':lineFeedback==='missed'?'border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]':'border-white/10'}`}>{lineFeedback&&<div className={`absolute left-4 top-4 rounded-full px-4 py-2 text-xs font-black uppercase tracking-wider ${lineFeedback==='correct'?'bg-emerald-400 text-emerald-950':'bg-red-400 text-red-950'}`}>{lineFeedback==='correct'?'✓ Frase correcta':'✕ Frase incompleta'}</div>}<p className={`mb-6 mt-12 text-sm uppercase tracking-[.3em] ${canType?'text-cyan-300':'text-zinc-600'}`}>{canType?'Escribí ahora':currentLine?`La voz entra en ${(lineWaitMs/1000).toFixed(1)} s`:'Canción completada'}</p><div className={`min-h-24 text-3xl font-bold leading-relaxed transition-opacity ${!canType?'opacity-35':'opacity-100'}`}>{currentLine?.words.split(/\s+/).map((word,wordIndex)=><span key={wordIndex} className={`mr-3 inline-block transition-all ${canType&&wordIndex===currentWord?'text-cyan-300 [text-shadow:0_0_22px_rgba(103,232,249,.5)]':''}`}>{word.split('').map((char,charIndex)=>{const before=currentLine.words.split(/\s+/).slice(0,wordIndex).join(' ').length+(wordIndex?1:0)+charIndex;const actual=normalizedTyped[before];const expected=target[before];return <span key={charIndex} className={actual==null?'text-zinc-300':actual===expected?'text-emerald-400':'rounded bg-red-500/30 text-red-300'}>{char}</span>;})}</span>)||'Preparando la letra…'}</div><p className="mt-8 text-xl text-zinc-600">{lyrics[lineIndex+1]?.words||'Último verso'}</p>{!canType&&currentLine&&<div className="mx-auto mt-6 h-1.5 max-w-xs overflow-hidden rounded-full bg-white/10"><div className="h-full animate-pulse bg-cyan-300" style={{width:`${Math.max(8,100-Math.min(100,lineWaitMs/5000*100))}%`}}/></div>}<input key={lineIndex} ref={inputRef} value={visibleTyped} onChange={event=>typeLine(event.target.value)} disabled={!canType} className="absolute inset-0 opacity-0" autoComplete="off" spellCheck={false}/></div></>}</div>}</section><aside className="rounded-3xl border border-white/10 bg-white/[.04] p-5"><div className="flex items-center justify-between"><h2 className="font-bold">{inGame?'Clasificación en vivo':'Jugadores'}</h2><span className="rounded-full bg-white/5 px-2 py-1 text-xs">{players.length}/8</span></div><div className="mt-4 space-y-3">{(inGame?sortedPlayers:players).map((player,index)=><div key={player.user_id} className={`flex items-center gap-3 rounded-2xl border p-3 ${inGame&&index===0?'border-amber-300/30 bg-amber-300/10':'border-white/5 bg-black/20'}`}><span className={`w-5 text-center text-xs font-black ${index===0&&inGame?'text-amber-300':'text-zinc-500'}`}>{inGame?`#${index+1}`:''}</span><Avatar profile={player.users} size="sm"/><div className="min-w-0 flex-1"><b className="block truncate">{player.users.username}</b><span className="text-xs text-zinc-500">{inGame?`${player.accuracy}% · ${player.wpm} ppm`:player.user_id===lobby.host_id?'Anfitrión':player.ready?'Listo':'Preparándose'}</span></div>{inGame?<b className="text-sm text-violet-300">{player.score.toLocaleString()}</b>:player.ready&&<span className="h-2 w-2 rounded-full bg-emerald-400"/>}</div>)}</div></aside></div></div></main>;
 }

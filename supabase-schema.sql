@@ -246,6 +246,25 @@ begin
   end if;
 end; $$;
 
+create or replace function public.update_lobby_progress(target_lobby uuid, current_score integer,
+  current_accuracy numeric, current_wpm integer, current_combo integer)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.lobby_players
+  set score = greatest(score, greatest(0, current_score)),
+      accuracy = least(100, greatest(0, current_accuracy)),
+      wpm = greatest(0, current_wpm),
+      max_combo = greatest(max_combo, greatest(0, current_combo))
+  where lobby_id = target_lobby
+    and user_id = auth.uid()
+    and finished_at is null
+    and exists (
+      select 1 from public.lobbies
+      where id = target_lobby and status in ('countdown', 'playing')
+    );
+  if not found then raise exception 'No se pudo actualizar el progreso de esta partida.'; end if;
+end; $$;
+
 grant execute on function public.create_lobby() to authenticated;
 grant execute on function public.join_lobby(text) to authenticated;
 grant execute on function public.set_lobby_ready(uuid, boolean) to authenticated;
@@ -253,6 +272,7 @@ grant execute on function public.configure_lobby(uuid, text, text, text, text, t
 grant execute on function public.start_lobby(uuid) to authenticated;
 grant execute on function public.mark_lobby_playing(uuid) to authenticated;
 grant execute on function public.submit_lobby_result(uuid, integer, numeric, integer, integer) to authenticated;
+grant execute on function public.update_lobby_progress(uuid, integer, numeric, integer, integer) to authenticated;
 create index if not exists lobbies_code_idx on public.lobbies(code);
 create index if not exists lobby_players_score_idx on public.lobby_players(lobby_id, score desc);
 do $$ begin alter publication supabase_realtime add table public.lobbies; exception when duplicate_object then null; end $$;
