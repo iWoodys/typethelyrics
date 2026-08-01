@@ -79,12 +79,25 @@ export default function MultiplayerPage() {
 
       // Repara cuentas antiguas o perfiles que no fueron creados por el trigger.
       if (!userProfile) {
-        const fallbackUsername = String(user.user_metadata?.username || user.email?.split('@')[0] || `jugador_${user.id.slice(0, 6)}`);
-        const { data: repairedProfile } = await supabase
+        const requestedUsername = String(user.user_metadata?.username || user.email?.split('@')[0] || 'jugador');
+        let { data: repairedProfile, error: repairError } = await supabase
           .from('users')
-          .upsert({ id: user.id, username: fallbackUsername, email: user.email || '', score: 0 }, { onConflict: 'id' })
+          .insert({ id: user.id, username: requestedUsername, email: user.email || '', score: 0 })
           .select('id,username,avatar_url,is_premium,premium_until')
           .maybeSingle();
+
+        // Si el nombre ya existe, conserva la elección y agrega un sufijo corto.
+        if (repairError?.code === '23505') {
+          const retry = await supabase
+            .from('users')
+            .insert({ id: user.id, username: `${requestedUsername}_${user.id.slice(0, 6)}`, email: user.email || '', score: 0 })
+            .select('id,username,avatar_url,is_premium,premium_until')
+            .maybeSingle();
+          repairedProfile = retry.data;
+          repairError = retry.error;
+        }
+
+        if (repairError) setError(`No pudimos crear tu perfil: ${repairError.message}`);
         userProfile = repairedProfile;
       }
 
