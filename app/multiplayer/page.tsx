@@ -59,19 +59,62 @@ export default function MultiplayerPage() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      const { data } = await supabase.auth.getUser();
-      setAuthUser(data.user);
-      if (data.user) {
-        const { data: userProfile } = await supabase.from('users').select('id,username,avatar_url,is_premium,premium_until').eq('id', data.user.id).maybeSingle();
-        setProfile(userProfile as Profile|null);
-        const roomCode = new URLSearchParams(window.location.search).get('room');
-        if (roomCode) await joinByCode(roomCode, true);
+    let active = true;
+
+    const restoreUser = async (user: User | null) => {
+      if (!active) return;
+      setAuthUser(user);
+      setProfile(null);
+
+      if (!user) {
+        setLoading(false);
+        return;
       }
-      setLoading(false);
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+      let { data: userProfile } = await supabase
+        .from('users')
+        .select('id,username,avatar_url,is_premium,premium_until')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      // Repara cuentas antiguas o perfiles que no fueron creados por el trigger.
+      if (!userProfile) {
+        const fallbackUsername = String(user.user_metadata?.username || user.email?.split('@')[0] || `jugador_${user.id.slice(0, 6)}`);
+        const { data: repairedProfile } = await supabase
+          .from('users')
+          .upsert({ id: user.id, username: fallbackUsername, email: user.email || '', score: 0 }, { onConflict: 'id' })
+          .select('id,username,avatar_url,is_premium,premium_until')
+          .maybeSingle();
+        userProfile = repairedProfile;
+      }
+
+      if (!active) return;
+      setProfile(userProfile as Profile|null);
+
+      const roomCode = new URLSearchParams(window.location.search).get('room');
+      if (roomCode) {
+        const { data: room, error: joinError } = await supabase.rpc('join_lobby', { room_code: roomCode.toUpperCase() });
+        if (!active) return;
+        if (joinError) setError(joinError.message);
+        else {
+          const joinedRoom = room as Lobby;
+          setLobby(joinedRoom);
+          await loadRoom(joinedRoom.id);
+        }
+      }
+      if (active) setLoading(false);
+    };
+
+    void supabase.auth.getSession().then(({ data }) => restoreUser(data.session?.user ?? null));
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      void restoreUser(session?.user ?? null);
+    });
+
+    return () => {
+      active = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, [loadRoom]);
 
   useEffect(() => {
     if (!lobby) return;
