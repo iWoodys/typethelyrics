@@ -178,7 +178,17 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 ## Testing
 
-No explicit testing framework is present in this codebase.  Adding unit or integration tests is recommended for future development.
+Run `npm test`, `npm run typecheck` and `npm run lint` before deploying.
+
+## Spotify playlists
+
+Spotify's February 2026 API only allows reading playlists owned by the connected
+user or playlists where that user is a collaborator. Add this redirect URI to the
+Spotify Developer Dashboard:
+
+`https://typethelyrics.sbs/api/spotify/callback`
+
+For local development also add `http://localhost:3000/api/spotify/callback`.
 
 
 *README.md was made with [Etchr](https://etchr.dev)*

@@ -46,8 +46,8 @@ export const getAccessToken = async () => {
   return cachedToken;
 };
 
-const spotifyFetch = async <T>(path: string): Promise<T> => {
-  const token = await getAccessToken();
+const spotifyFetch = async <T>(path: string, userToken?: string): Promise<T> => {
+  const token = userToken || await getAccessToken();
   const response = await fetch(`https://api.spotify.com/v1${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     next: { revalidate: 300 },
@@ -150,12 +150,13 @@ export const getTracksByIds = async (trackIds: string[]) => {
   }));
 };
 
-export const getPlaylistTracks = async (playlistId: string) => {
-  const result = await spotifyFetch<{ items: Array<{ track: SpotifyTrack | null }> }>(
-    `/playlists/${encodeURIComponent(playlistId)}/tracks?limit=50`,
+export const getPlaylistTracks = async (playlistId: string, userToken: string) => {
+  const result = await spotifyFetch<{ items: Array<{ item?: SpotifyTrack | null; track?: SpotifyTrack | null }> }>(
+    `/playlists/${encodeURIComponent(playlistId)}/items?limit=50&market=AR`,
+    userToken,
   );
   return result.items.flatMap(item => {
-    const track = item.track;
+    const track = item.item || item.track;
     if (!track) return [];
     return [{ id: track.id, title: track.name, artist: track.artists.map(artist => artist.name).join(', '), album: track.album.name, image: track.album.images[0]?.url || '', url: `https://open.spotify.com/track/${track.id}` }];
   });

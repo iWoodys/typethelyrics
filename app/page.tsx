@@ -25,6 +25,7 @@ import {
   Gamepad2,
   Gauge,
   Heart,
+  HelpCircle,
   Keyboard,
   Medal,
   Merge,
@@ -130,7 +131,14 @@ const LS = {
   offsets: "ttl-song-offsets-v1",
   originals: "ttl-original-lyrics-v1",
   settings: "ttl-settings-v2",
+  guide: "ttl-guide-seen-v1",
 };
+const GUIDE_STEPS = [
+  { title: "1. Elegí una canción", text: "Buscala por nombre o pegá un enlace de una canción de Spotify. Para playlists, conectá Spotify: desde 2026 sólo se permiten playlists propias o colaborativas." },
+  { title: "2. Iniciá la reproducción", text: "Pulsá Play dentro de Spotify y después Iniciar partida. Si la canción tiene una introducción larga, la escritura permanecerá bloqueada hasta que realmente empiece la primera voz." },
+  { title: "3. Escribí cuando se ilumine", text: "Cuando aparezca «Escribí ahora», usá el teclado directamente. Entre versos el juego espera; si Spotify está pausado, la pantalla te lo indicará." },
+  { title: "4. Calibrá sólo si hace falta", text: "Pulsá «Calibrar canción» y marcá el comienzo de tres versos al escucharlos. El ajuste se guarda para esa canción y la partida vuelve al principio automáticamente." },
+];
 
 export default function Home() {
   const [url, setUrl] = useState("");
@@ -177,6 +185,8 @@ export default function Home() {
   const [draftLyrics, setDraftLyrics] = useState<SyncedLyric[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modesOpen, setModesOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [guideStep, setGuideStep] = useState(0);
   const [fontScale, setFontScale] = useState(1);
   const [highContrast, setHighContrast] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -185,6 +195,7 @@ export default function Home() {
   const [publicEdit, setPublicEdit] = useState(false);
   const [playlistUrl, setPlaylistUrl] = useState("");
   const [playlistTracks, setPlaylistTracks] = useState<SongCard[]>([]);
+  const [playlistMessage, setPlaylistMessage] = useState("");
   const [rankings, setRankings] = useState<Ranking[]>([]);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [headerProfile, setHeaderProfile] = useState<HeaderProfile | null>(
@@ -200,6 +211,7 @@ export default function Home() {
   const lineResultsRef = useRef<LineResult[]>([]);
   const pausedAtRef = useRef<number | null>(null);
   const pausedTotalRef = useRef(0);
+  const pausedForTypingRef = useRef(false);
 
   useEffect(() => {
     const read = <T,>(key: string, fallback: T): T => {
@@ -221,6 +233,7 @@ export default function Home() {
     setFontScale(saved.fontScale);
     setHighContrast(saved.highContrast);
     setReducedMotion(saved.reducedMotion);
+    if (!localStorage.getItem(LS.guide)) setGuideOpen(true);
   }, []);
   useEffect(() => {
     const loadProfile = async (user: User | null) => {
@@ -605,8 +618,11 @@ export default function Home() {
         (lyrics[lineIndex + 1]?.startTimeMs || current.startTimeMs + 6000) +
           1200 &&
       normalizedTyped !== target
-    )
+    ) {
       sendPlayer("pause");
+      pausedForTypingRef.current = true;
+      setPlaying(false);
+    }
   }, [
     current,
     effectivePosition,
@@ -638,6 +654,7 @@ export default function Home() {
       lineResultsRef.current = [];
       pausedAtRef.current = null;
       pausedTotalRef.current = 0;
+      pausedForTypingRef.current = false;
       setLives(3);
       setFinished(false);
       setResult(null);
@@ -709,7 +726,8 @@ export default function Home() {
       setTyped("");
       setCurrentLineErrors(0);
       lastTypedLength.current = 0;
-      if (mode === "relaxed" && !playing) {
+      if (mode === "relaxed" && (pausedForTypingRef.current || !playing)) {
+        pausedForTypingRef.current = false;
         sendPlayer("play");
         setPlaying(true);
       }
@@ -804,9 +822,14 @@ export default function Home() {
 
   useEffect(() => {
     const requestedTrack = new URLSearchParams(window.location.search).get("track");
-    if (!requestedTrack || !/^[a-zA-Z0-9]+$/.test(requestedTrack)) return;
-    void loadSong(`https://open.spotify.com/track/${requestedTrack}`);
-    window.history.replaceState({}, "", window.location.pathname);
+    const spotifyState = new URLSearchParams(window.location.search).get("spotify");
+    if (spotifyState) {
+      setTab("library");
+      setPlaylistMessage(spotifyState === "connected" ? "Spotify quedó conectado. Ya podés importar una playlist propia o colaborativa." : "No se pudo conectar Spotify. Revisá que la URL de retorno esté habilitada.");
+    }
+    if (requestedTrack && /^[a-zA-Z0-9]+$/.test(requestedTrack))
+      void loadSong(`https://open.spotify.com/track/${requestedTrack}`);
+    if (requestedTrack || spotifyState) window.history.replaceState({}, "", window.location.pathname);
     // Solo procesa el enlace proveniente del historial al abrir la página.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -952,12 +975,21 @@ export default function Home() {
     const sample = nearest.startTimeMs - position;
     const samples = [...calibrationSamples, sample].slice(-5);
     setCalibrationSamples(samples);
-    if (samples.length >= 3)
-      setOffset(
-        Math.round(
-          samples.reduce((sum, value) => sum + value, 0) / samples.length / 50,
-        ) * 50,
-      );
+    if (samples.length >= 3) {
+      const calibratedOffset = Math.round(samples.reduce((sum, value) => sum + value, 0) / samples.length / 50) * 50;
+      setOffset(calibratedOffset);
+      if (trackId) {
+        const offsets = readStoredJson<Record<string, number>>(LS.offsets, {});
+        offsets[trackId] = calibratedOffset;
+        writeStoredJson(LS.offsets, offsets);
+      }
+      setCalibrating(false);
+      setCalibrationSamples([]);
+      setSyncMessage("Calibración guardada. Reiniciamos la canción para aplicar el ajuste.");
+      resetGame(mode, 0);
+      setPosition(0);
+      sendPlayer("restart");
+    }
   };
 
   const resetLatency = () => {
@@ -968,6 +1000,7 @@ export default function Home() {
   const importPlaylist = async (event: FormEvent) => {
     event.preventDefault();
     setSearching(true);
+    setPlaylistMessage("");
     try {
       const response = await fetch("/api/playlist", {
         method: "POST",
@@ -975,12 +1008,18 @@ export default function Home() {
         body: JSON.stringify({ url: playlistUrl }),
       });
       const data = await response.json();
+      if (data.requiresSpotifyAuth && data.connectUrl) {
+        window.location.assign(data.connectUrl);
+        return;
+      }
       if (!response.ok) throw new Error(data.error);
       setPlaylistTracks(data.tracks || []);
+      setPlaylistMessage(`${data.tracks?.length || 0} canciones importadas.`);
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "No se pudo importar",
       );
+      setPlaylistMessage(reason instanceof Error ? reason.message : "No se pudo importar la playlist.");
     } finally {
       setSearching(false);
     }
@@ -1051,6 +1090,13 @@ export default function Home() {
             >
               <Gamepad2 size={16} />
               <span className="hidden sm:inline">Modos</span>
+            </button>
+            <button
+              onClick={() => { setGuideStep(0); setGuideOpen(true); }}
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-emerald-300 hover:bg-emerald-400/10"
+            >
+              <HelpCircle size={16} />
+              <span className="hidden sm:inline">Guía</span>
             </button>
             <a
               href="https://discord.gg/vWBs6txYZR"
@@ -1306,28 +1352,17 @@ export default function Home() {
                           : "✕ Frase incompleta"}
                       </div>
                     )}
-                    <div className="absolute right-4 top-4 flex gap-2">
+                    <div className="absolute right-4 top-4">
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
-                          setOffset((value) => value - 500);
+                          setCalibrationSamples([]);
+                          setCalibrating(true);
+                          sendPlayer("play");
                         }}
-                        className="rounded-lg bg-black/30 px-3 py-2 text-xs"
+                        className="flex items-center gap-2 rounded-lg bg-cyan-400/15 px-3 py-2 text-xs font-bold text-cyan-200"
                       >
-                        −500 ms
-                      </button>
-                      <span className="rounded-lg bg-violet-500/15 px-3 py-2 text-xs text-violet-300">
-                        {offset > 0 ? "+" : ""}
-                        {offset} ms
-                      </span>
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setOffset((value) => value + 500);
-                        }}
-                        className="rounded-lg bg-black/30 px-3 py-2 text-xs"
-                      >
-                        +500 ms
+                        <Gauge size={14} /> {calibrating ? "Calibrando…" : "Calibrar canción"}
                       </button>
                     </div>
                     <div className="mt-12 text-center">
@@ -1336,9 +1371,11 @@ export default function Home() {
                       >
                         {!started
                           ? "Prepará tus dedos"
+                          : !playing
+                            ? "Spotify está pausado · presioná Play"
                           : canType
                             ? "Escribí ahora"
-                            : `La voz entra en ${(lineWaitMs / 1000).toFixed(1)} s`}
+                            : `${lineIndex === 0 ? "Intro musical" : "Próximo verso"} · la voz entra en ${(lineWaitMs / 1000).toFixed(1)} s`}
                       </p>
                       <div
                         className={`min-h-24 font-bold leading-relaxed transition-opacity ${started && !canType ? "opacity-35" : "opacity-100"}`}
@@ -1464,20 +1501,11 @@ export default function Home() {
                       Ignorar puntuación
                     </button>
                     <button
-                      onClick={() => {
-                        setCalibrating((v) => !v);
-                        setCalibrationSamples([]);
-                      }}
-                      className="flex items-center gap-1 rounded-full bg-cyan-500/15 px-3 py-2 text-cyan-300"
-                    >
-                      <Gauge size={14} /> Calibrar latencia
-                    </button>
-                    <button
                       onClick={resetLatency}
                       disabled={offset === 0 && !calibrating}
                       className="flex items-center gap-1 rounded-full bg-white/5 px-3 py-2 text-zinc-300 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      <RotateCcw size={14} /> Restablecer latencia
+                      <RotateCcw size={14} /> Borrar calibración
                     </button>
                     <button
                       onClick={() => void restoreOriginalLyrics()}
@@ -1508,8 +1536,9 @@ export default function Home() {
                     <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
                       <h3 className="font-bold">Calibración automática</h3>
                       <p className="my-2 text-sm text-zinc-400">
-                        Reproducí la canción y presioná el botón justo cuando
-                        escuches comenzar un verso. Hacé al menos tres marcas.
+                        Reproducí la canción y marcá justo cuando escuches comenzar
+                        tres versos. Al terminar se guardará el ajuste y la canción
+                        volverá al principio automáticamente.
                       </p>
                       <button
                         onClick={markCalibration}
@@ -1518,8 +1547,7 @@ export default function Home() {
                         Marcar canto ahora
                       </button>
                       <span className="ml-3 text-sm text-cyan-200">
-                        {calibrationSamples.length}/5 marcas · ajuste {offset}{" "}
-                        ms
+                        {calibrationSamples.length}/3 marcas
                       </span>
                     </div>
                   )}
@@ -1557,13 +1585,18 @@ export default function Home() {
               <input
                 value={playlistUrl}
                 onChange={(e) => setPlaylistUrl(e.target.value)}
-                placeholder="Enlace de una playlist pública de Spotify"
+                placeholder="Enlace de una playlist propia o colaborativa"
                 className="h-12 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 outline-none"
               />
               <button className="rounded-xl border border-white/10 px-5">
-                Importar
+                {searching ? "Importando…" : "Importar"}
               </button>
             </form>
+            <div className="mb-8 flex max-w-2xl flex-wrap items-center gap-3 text-sm">
+              <a href="/api/spotify/login" className="rounded-xl bg-emerald-500/15 px-4 py-2 font-bold text-emerald-200">Conectar Spotify</a>
+              <span className="text-zinc-500">Spotify exige conectar la cuenta y sólo permite playlists propias o colaborativas.</span>
+            </div>
+            {playlistMessage && <p className="mb-6 max-w-2xl rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-zinc-300">{playlistMessage}</p>}
             {searchResults.length > 0 && (
               <SongGrid
                 title="Resultados"
@@ -1980,6 +2013,26 @@ export default function Home() {
       )}
 
       <GameModesModal open={modesOpen} onClose={() => setModesOpen(false)} />
+      {guideOpen && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-black/80 p-4 backdrop-blur-md">
+          <div role="dialog" aria-modal="true" aria-labelledby="guide-title" className="w-full max-w-lg rounded-3xl border border-emerald-400/20 bg-[#11131a] p-7 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase tracking-[.25em] text-emerald-300">Guía rápida · {guideStep + 1}/{GUIDE_STEPS.length}</span>
+              <button aria-label="Cerrar guía" onClick={() => setGuideOpen(false)}><X /></button>
+            </div>
+            <h2 id="guide-title" className="mt-6 text-3xl font-black">{GUIDE_STEPS[guideStep].title}</h2>
+            <p className="mt-4 leading-relaxed text-zinc-300">{GUIDE_STEPS[guideStep].text}</p>
+            <div className="mt-7 flex gap-2">{GUIDE_STEPS.map((_, index) => <span key={index} className={`h-1.5 flex-1 rounded-full ${index <= guideStep ? "bg-emerald-400" : "bg-white/10"}`} />)}</div>
+            <div className="mt-7 flex justify-between">
+              <button disabled={guideStep === 0} onClick={() => setGuideStep(step => Math.max(0, step - 1))} className="rounded-xl px-4 py-3 text-zinc-400 disabled:opacity-30">Anterior</button>
+              <button onClick={() => {
+                if (guideStep < GUIDE_STEPS.length - 1) setGuideStep(step => step + 1);
+                else { localStorage.setItem(LS.guide, "1"); setGuideOpen(false); }
+              }} className="rounded-xl bg-emerald-400 px-6 py-3 font-black text-emerald-950">{guideStep < GUIDE_STEPS.length - 1 ? "Siguiente" : "Entendido"}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {settingsOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4 backdrop-blur-md">
           <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#11121a] p-6">
