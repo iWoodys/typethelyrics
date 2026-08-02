@@ -679,7 +679,7 @@ export default function MultiplayerPage() {
     correct?: number;
     mistakes?: number;
     maxCombo?: number;
-  }) => {
+  }, pauseAudio = true) => {
     if (!lobby || submittedRef.current) return;
     submittedRef.current = true;
     const finalScore = finalStats?.score ?? score;
@@ -692,7 +692,7 @@ export default function MultiplayerPage() {
       : 0;
     const wpm = Math.round(finalCorrect / 5 / minutes);
     setLocalFinished(true);
-    sendPlayer("pause");
+    if (pauseAudio) sendPlayer("pause");
     const { error: rpcError } = await supabase.rpc("submit_lobby_result", {
       target_lobby: lobby.id,
       final_score: finalScore,
@@ -776,9 +776,9 @@ export default function MultiplayerPage() {
     if (
       startedAt &&
       lobby?.duration_ms &&
-      gamePosition >= lobby.duration_ms - 500
+      gamePosition >= lobby.duration_ms - 100
     )
-      void finish();
+      void finish(undefined, false);
   }, [finish, gamePosition, lobby?.duration_ms, startedAt]);
 
   const typeLine = (value: string) => {

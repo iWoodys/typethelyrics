@@ -169,6 +169,7 @@ export default function Home() {
   const [started, setStarted] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [finished, setFinished] = useState(false);
+  const [allLinesComplete, setAllLinesComplete] = useState(false);
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
@@ -389,6 +390,7 @@ export default function Home() {
     started &&
     singerStarted &&
     !finished &&
+    !allLinesComplete &&
     (playing || mode === "relaxed" || mode === "practice");
   useEffect(() => {
     if (canType) inputRef.current?.focus();
@@ -434,7 +436,7 @@ export default function Home() {
     correct?: number;
     mistakes?: number;
     maxCombo?: number;
-  }) => {
+  }, pauseAudio = true) => {
     if (finished) return;
     const finalCorrect = finalStats?.correct ?? correct;
     const finalMistakes = finalStats?.mistakes ?? mistakes;
@@ -469,7 +471,7 @@ export default function Home() {
     setResult(final);
     setFinished(true);
     setStarted(false);
-    sendPlayer("pause");
+    if (pauseAudio) sendPlayer("pause");
     const today = new Date().toISOString().slice(0, 10);
     setStats((old) => ({
       games: old.games + 1,
@@ -604,7 +606,7 @@ export default function Home() {
       !started ||
       finished ||
       !track?.track_duration_ms ||
-      position < track.track_duration_ms - 750
+      position < track.track_duration_ms - 100
     )
       return;
     const recorded = new Set(lineResultsRef.current.map((line) => line.index));
@@ -632,7 +634,7 @@ export default function Home() {
       ];
     });
     addLineResults(remaining);
-    finishGame();
+    finishGame(undefined, false);
   }, [
     addLineResults,
     currentLineErrors,
@@ -696,6 +698,7 @@ export default function Home() {
       pausedForTypingRef.current = false;
       setLives(3);
       setFinished(false);
+      setAllLinesComplete(false);
       setResult(null);
       setStarted(false);
       lastTypedLength.current = 0;
@@ -782,12 +785,7 @@ export default function Home() {
         sendPlayer("play");
         setPlaying(true);
       }
-      if (lineIndex >= lyrics.length - 1)
-        finishGame({
-          correct: correct + addedCorrect,
-          mistakes: mistakes + addedMistakes,
-          maxCombo: Math.max(maxCombo, nextCombo),
-        });
+      if (lineIndex >= lyrics.length - 1) setAllLinesComplete(true);
       else {
         setTypedLineIndex(lineIndex + 1);
         setLineIndex((index) => index + 1);
