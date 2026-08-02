@@ -298,6 +298,40 @@ begin
     wpm = 0, max_combo = 0, finished_at = null where lobby_id = target_lobby;
 end; $$;
 
+create or replace function public.is_lobby_member(target_lobby uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (select 1 from public.lobby_players
+    where lobby_id = target_lobby and user_id = auth.uid());
+$$;
+revoke all on function public.is_lobby_member(uuid) from public;
+grant execute on function public.is_lobby_member(uuid) to authenticated;
+
+drop policy if exists "Authenticated users find lobbies" on public.lobbies;
+create policy "Players view their lobbies" on public.lobbies for select to authenticated
+  using (public.is_lobby_member(id));
+drop policy if exists "Players view lobby members" on public.lobby_players;
+create policy "Players view lobby members" on public.lobby_players for select to authenticated
+  using (public.is_lobby_member(lobby_id));
+
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare requested_name text;
+begin
+  requested_name := left(coalesce(nullif(trim(new.raw_user_meta_data->>'username'), ''),
+    split_part(coalesce(new.email, 'jugador'), '@', 1)), 24);
+  begin
+    insert into public.users (id, username, email, score)
+    values (new.id, requested_name, coalesce(new.email, ''), 0)
+    on conflict (id) do nothing;
+  exception when unique_violation then
+    insert into public.users (id, username, email, score)
+    values (new.id, left(requested_name, 17) || '_' || substr(new.id::text, 1, 6),
+      coalesce(new.email, ''), 0)
+    on conflict (id) do nothing;
+  end;
+  return new;
+end; $$;
+
 grant execute on function public.create_lobby() to authenticated;
 grant execute on function public.join_lobby(text) to authenticated;
 grant execute on function public.set_lobby_ready(uuid, boolean) to authenticated;
@@ -308,6 +342,113 @@ grant execute on function public.mark_lobby_playing(uuid) to authenticated;
 grant execute on function public.submit_lobby_result(uuid, integer, numeric, integer, integer) to authenticated;
 grant execute on function public.update_lobby_progress(uuid, integer, numeric, integer, integer) to authenticated;
 grant execute on function public.reset_lobby(uuid) to authenticated;
+
+-- Hardening (2026-08): limita los datos públicos y evita mutaciones directas
+-- de puntuaciones. Este bloque puede ejecutarse sobre una instalación existente.
+revoke select on public.users from anon, authenticated;
+grant select (id, username, avatar_url, score, is_premium, premium_until, created_at)
+  on public.users to anon, authenticated;
+revoke update on public.users from authenticated;
+grant update (username, avatar_url, birth_date, gender) on public.users to authenticated;
+
+drop policy if exists "Anyone can register a song play" on public.songs;
+drop policy if exists "Anyone can increment song plays" on public.songs;
+revoke insert, update, delete on public.songs from anon, authenticated;
+
+drop policy if exists "Users save their results" on public.game_results;
+revoke insert, update, delete on public.game_results from anon, authenticated;
+
+create or replace function public.get_my_profile()
+returns table (username text, email text, avatar_url text, birth_date date, gender text,
+  is_premium boolean, premium_until timestamptz)
+language sql security definer set search_path = public stable as $$
+  select u.username, u.email, u.avatar_url, u.birth_date, u.gender,
+    u.is_premium, u.premium_until
+  from public.users u where u.id = auth.uid();
+$$;
+revoke all on function public.get_my_profile() from public;
+grant execute on function public.get_my_profile() to authenticated;
+
+create or replace function public.save_game_result(
+  target_track_id text, target_title text, target_artist text, target_image text,
+  target_mode text, target_score integer, target_wpm integer,
+  target_accuracy numeric, target_combo integer)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare result_id uuid; computed_rank text;
+begin
+  if auth.uid() is null then raise exception 'Tenés que iniciar sesión.'; end if;
+  if target_track_id !~ '^[A-Za-z0-9]{10,30}$'
+    or target_mode not in ('relaxed', 'rhythm', 'expert', 'practice', 'survival')
+    or target_score not between 0 and 1000000
+    or target_wpm not between 0 and 400
+    or target_accuracy not between 0 and 100
+    or target_combo not between 0 and 10000 then
+    raise exception 'Resultado inválido.';
+  end if;
+  computed_rank := case
+    when target_accuracy >= 98 and target_score >= 10000 then 'S'
+    when target_accuracy >= 95 then 'A'
+    when target_accuracy >= 85 then 'B'
+    else 'C' end;
+  insert into public.game_results (user_id, spotify_track_id, track_title,
+    track_artist, image_url, mode, score, wpm, accuracy, max_combo, rank)
+  values (auth.uid(), target_track_id, left(coalesce(target_title, 'Canción'), 200),
+    left(coalesce(target_artist, ''), 300), left(target_image, 1000), target_mode,
+    target_score, target_wpm, target_accuracy, target_combo, computed_rank)
+  returning id into result_id;
+  return result_id;
+end; $$;
+revoke all on function public.save_game_result(text,text,text,text,text,integer,integer,numeric,integer) from public;
+grant execute on function public.save_game_result(text,text,text,text,text,integer,integer,numeric,integer) to authenticated;
+
+create or replace function public.submit_lobby_result(target_lobby uuid, final_score integer,
+  final_accuracy numeric, final_wpm integer, final_combo integer)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if final_score not between 0 and 1000000 or final_accuracy not between 0 and 100
+    or final_wpm not between 0 and 400 or final_combo not between 0 and 10000 then
+    raise exception 'Resultado inválido.';
+  end if;
+  update public.lobby_players set score = greatest(score, final_score), accuracy = final_accuracy,
+    wpm = final_wpm, max_combo = greatest(max_combo, final_combo), finished_at = now()
+  where lobby_id = target_lobby and user_id = auth.uid();
+  if not found then raise exception 'No pertenecés a esta sala.'; end if;
+  update public.lobbies set status = 'finished', updated_at = now()
+  where id = target_lobby and status in ('countdown', 'playing')
+    and start_at is not null and duration_ms is not null
+    and now() >= start_at + duration_ms * interval '1 millisecond';
+end; $$;
+
+create or replace function public.update_lobby_progress(target_lobby uuid, current_score integer,
+  current_accuracy numeric, current_wpm integer, current_combo integer)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if current_score not between 0 and 1000000 or current_accuracy not between 0 and 100
+    or current_wpm not between 0 and 400 or current_combo not between 0 and 10000 then
+    raise exception 'Progreso inválido.';
+  end if;
+  update public.lobby_players set score = greatest(score, current_score),
+    accuracy = current_accuracy, wpm = current_wpm,
+    max_combo = greatest(max_combo, current_combo)
+  where lobby_id = target_lobby and user_id = auth.uid() and finished_at is null
+    and exists (select 1 from public.lobbies where id = target_lobby
+      and status in ('countdown', 'playing'));
+  if not found then raise exception 'No se pudo actualizar el progreso de esta partida.'; end if;
+end; $$;
+
+create or replace function public.reset_lobby(target_lobby uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare room public.lobbies%rowtype;
+begin
+  select * into room from public.lobbies
+  where id = target_lobby and host_id = auth.uid() and status in ('waiting', 'finished');
+  if not found then raise exception 'Solo el anfitrión puede reiniciar esta lobby.'; end if;
+  update public.lobbies set status = 'waiting', spotify_track_id = null, track_url = null,
+    track_title = null, track_artist = null, image_url = null, duration_ms = null,
+    lyrics = '[]'::jsonb, start_at = null, updated_at = now() where id = target_lobby;
+  update public.lobby_players set ready = (user_id = room.host_id), score = 0, accuracy = 0,
+    wpm = 0, max_combo = 0, finished_at = null where lobby_id = target_lobby;
+end; $$;
 create index if not exists lobbies_code_idx on public.lobbies(code);
 create index if not exists lobby_players_score_idx on public.lobby_players(lobby_id, score desc);
 do $$ begin alter publication supabase_realtime add table public.lobbies; exception when duplicate_object then null; end $$;

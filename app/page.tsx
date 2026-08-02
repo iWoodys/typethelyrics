@@ -363,8 +363,15 @@ export default function Home() {
     return Math.floor(ratio * current.words.split(/\s+/).length);
   }, [current, lyrics, lineIndex, effectivePosition]);
 
-  const finishGame = useCallback(() => {
+  const finishGame = useCallback((finalStats?: {
+    correct?: number;
+    mistakes?: number;
+    maxCombo?: number;
+  }) => {
     if (finished) return;
+    const finalCorrect = finalStats?.correct ?? correct;
+    const finalMistakes = finalStats?.mistakes ?? mistakes;
+    const finalMaxCombo = finalStats?.maxCombo ?? maxCombo;
     const openPause = pausedAtRef.current
       ? Date.now() - pausedAtRef.current
       : 0;
@@ -372,9 +379,10 @@ export default function Home() {
       (Date.now() - startedAt - pausedTotalRef.current - openPause) / 60000,
       1 / 60,
     );
-    const accuracy =
-      correct + mistakes ? (correct / (correct + mistakes)) * 100 : 0;
-    const wpm = Math.round(correct / 5 / elapsedMinutes);
+    const accuracy = finalCorrect + finalMistakes
+      ? (finalCorrect / (finalCorrect + finalMistakes)) * 100
+      : 0;
+    const wpm = Math.round(finalCorrect / 5 / elapsedMinutes);
     const challengeBonus = accuracy >= 95 ? 1000 : 0;
     const earnedScore = lineResultsRef.current.reduce(
       (sum, line) => sum + line.points,
@@ -385,7 +393,7 @@ export default function Home() {
       score: finalScore,
       accuracy: Math.round(accuracy * 10) / 10,
       wpm,
-      maxCombo,
+      maxCombo: finalMaxCombo,
       rank: rankFor(finalScore, accuracy),
       lines: lineResultsRef.current,
       challengeBonus,
@@ -429,18 +437,16 @@ export default function Home() {
       );
     void supabase.auth.getUser().then(async ({ data }) => {
       if (!data.user || !trackId) return;
-      await supabase.from("game_results").insert({
-        user_id: data.user.id,
-        spotify_track_id: trackId,
-        track_title: track?.track_name || "Canción",
-        track_artist: track?.track_artist || "",
-        image_url: track?.album_image || null,
-        mode,
-        score: finalScore,
-        wpm,
-        accuracy: final.accuracy,
-        max_combo: maxCombo,
-        rank: final.rank,
+      await supabase.rpc("save_game_result", {
+        target_track_id: trackId,
+        target_title: track?.track_name || "Canción",
+        target_artist: track?.track_artist || "",
+        target_image: track?.album_image || null,
+        target_mode: mode,
+        target_score: finalScore,
+        target_wpm: wpm,
+        target_accuracy: final.accuracy,
+        target_combo: finalMaxCombo,
       });
     });
   }, [
@@ -592,9 +598,11 @@ export default function Home() {
   ]);
 
   const resetGame = useCallback(
-    (selectedMode: GameMode = mode) => {
+    (selectedMode: GameMode = mode, practiceIndex?: number) => {
       const resetIndex =
-        selectedMode === "practice" ? Math.max(0, timedIndex) : 0;
+        selectedMode === "practice"
+          ? Math.max(0, practiceIndex ?? timedIndex)
+          : 0;
       setLineIndex(resetIndex);
       setTypedLineIndex(resetIndex);
       setTyped("");
@@ -632,14 +640,20 @@ export default function Home() {
       lowercase,
       noPunctuation,
     );
+    let addedCorrect = 0;
+    let addedMistakes = 0;
     if (nextTyped.length > lastTypedLength.current) {
-      const at = nextTyped.length - 1;
-      if (nextTyped[at] === target[at]) setCorrect((count) => count + 1);
-      else {
-        setMistakes((count) => count + 1);
-        setCurrentLineErrors((count) => count + 1);
+      for (let at = lastTypedLength.current; at < nextTyped.length; at += 1) {
+        if (nextTyped[at] === target[at]) addedCorrect += 1;
+        else addedMistakes += 1;
+      }
+      if (addedCorrect) setCorrect((count) => count + addedCorrect);
+      if (addedMistakes) {
+        setMistakes((count) => count + addedMistakes);
+        setCurrentLineErrors((count) => count + addedMistakes);
         setCombo(0);
-        if (mode === "survival") setLives((value) => value - 1);
+        if (mode === "survival")
+          setLives((currentLives) => Math.max(0, currentLives - addedMistakes));
       }
     }
     lastTypedLength.current = nextTyped.length;
@@ -677,7 +691,12 @@ export default function Home() {
         sendPlayer("play");
         setPlaying(true);
       }
-      if (lineIndex >= lyrics.length - 1) finishGame();
+      if (lineIndex >= lyrics.length - 1)
+        finishGame({
+          correct: correct + addedCorrect,
+          mistakes: mistakes + addedMistakes,
+          maxCombo: Math.max(maxCombo, nextCombo),
+        });
       else {
         setTypedLineIndex(lineIndex + 1);
         setLineIndex((index) => index + 1);
@@ -714,10 +733,13 @@ export default function Home() {
       ) as Record<string, SyncedLyric[]>;
       setTrackId(match[1]);
       setTrack(data.trackDetails);
-      setLyrics(edits[match[1]] || data.syncedLyrics);
-      setDraftLyrics(edits[match[1]] || data.syncedLyrics);
+      const loadedLyrics = edits[match[1]] || data.syncedLyrics;
+      if (!loadedLyrics?.length)
+        throw new Error("Esta canción no tiene letras sincronizadas disponibles.");
+      setLyrics(loadedLyrics);
+      setDraftLyrics(loadedLyrics);
       setTab("play");
-      resetGame();
+      resetGame(mode, 0);
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -728,6 +750,15 @@ export default function Home() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const requestedTrack = new URLSearchParams(window.location.search).get("track");
+    if (!requestedTrack || !/^[a-zA-Z0-9]+$/.test(requestedTrack)) return;
+    void loadSong(`https://open.spotify.com/track/${requestedTrack}`);
+    window.history.replaceState({}, "", window.location.pathname);
+    // Solo procesa el enlace proveniente del historial al abrir la página.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const doSearch = async (event: FormEvent) => {
     event.preventDefault();
@@ -1205,14 +1236,16 @@ export default function Home() {
                           fontSize: `clamp(1.5rem, ${fontScale * 3.2}vw, ${fontScale * 2.7}rem)`,
                         }}
                       >
-                        {current?.words.split(/\s+/).map((word, wordIndex) => (
+                        {(noPunctuation ? target : current?.words || "")
+                          .split(/\s+/)
+                          .map((word, wordIndex) => (
                           <span
                             key={wordIndex}
                             className={`mr-3 inline-block transition-all ${canType && wordIndex === currentWord ? "text-cyan-300 [text-shadow:0_0_22px_rgba(103,232,249,.5)]" : ""}`}
                           >
                             {word.split("").map((char, charIndex) => {
                               const before =
-                                current.words
+                                (noPunctuation ? target : current?.words || "")
                                   .split(/\s+/)
                                   .slice(0, wordIndex)
                                   .join(" ").length +
@@ -1257,6 +1290,7 @@ export default function Home() {
                       ref={inputRef}
                       value={visibleTyped}
                       onChange={(e) => handleTyping(e.target.value)}
+                      onPaste={(event) => event.preventDefault()}
                       onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
                         if (e.key === "Escape") sendPlayer("pause");
                       }}

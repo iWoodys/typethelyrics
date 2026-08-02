@@ -143,6 +143,7 @@ export default function MultiplayerPage() {
   const [startedAt, setStartedAt] = useState(0);
   const [clock, setClock] = useState(Date.now());
   const [localFinished, setLocalFinished] = useState(false);
+  const [allLinesComplete, setAllLinesComplete] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const feedbackTimer = useRef<number | null>(null);
@@ -475,6 +476,7 @@ export default function MultiplayerPage() {
       return;
     }
     setLocalFinished(false);
+    setAllLinesComplete(false);
     setStartedAt(0);
     setCountdown(null);
     setTyped("");
@@ -508,6 +510,7 @@ export default function MultiplayerPage() {
         setTypedLineIndex(0);
         setTyped("");
         setLineFeedback(null);
+        setAllLinesComplete(false);
         setStartedAt(new Date(lobby.start_at!).getTime());
         sendPlayer("restart");
         sendPlayer("play");
@@ -518,6 +521,15 @@ export default function MultiplayerPage() {
     const timer = window.setInterval(tick, 100);
     return () => window.clearInterval(timer);
   }, [lobby?.id, lobby?.start_at, lobby?.status, sendPlayer, startedAt]);
+
+  useEffect(() => {
+    if (lobby?.status !== "waiting" || !localFinished) return;
+    setLocalFinished(false);
+    setAllLinesComplete(false);
+    setStartedAt(0);
+    setCountdown(null);
+    submittedRef.current = false;
+  }, [lobby?.status, localFinished]);
 
   useEffect(() => {
     if (!startedAt || localFinished) return;
@@ -559,6 +571,7 @@ export default function MultiplayerPage() {
     countdown === 0 &&
     singerStarted &&
     !localFinished &&
+    !allLinesComplete &&
     lineIndex <= timedIndex;
   const currentWord = useMemo(() => {
     if (!currentLine) return -1;
@@ -612,21 +625,31 @@ export default function MultiplayerPage() {
     timedIndex,
   ]);
 
-  const finish = useCallback(async () => {
+  const finish = useCallback(async (finalStats?: {
+    score?: number;
+    correct?: number;
+    mistakes?: number;
+    maxCombo?: number;
+  }) => {
     if (!lobby || submittedRef.current) return;
     submittedRef.current = true;
+    const finalScore = finalStats?.score ?? score;
+    const finalCorrect = finalStats?.correct ?? correct;
+    const finalMistakes = finalStats?.mistakes ?? mistakes;
+    const finalMaxCombo = finalStats?.maxCombo ?? maxCombo;
     const minutes = Math.max((Date.now() - startedAt) / 60000, 1 / 60);
-    const accuracy =
-      correct + mistakes ? (correct / (correct + mistakes)) * 100 : 0;
-    const wpm = Math.round(correct / 5 / minutes);
+    const accuracy = finalCorrect + finalMistakes
+      ? (finalCorrect / (finalCorrect + finalMistakes)) * 100
+      : 0;
+    const wpm = Math.round(finalCorrect / 5 / minutes);
     setLocalFinished(true);
     sendPlayer("pause");
     const { error: rpcError } = await supabase.rpc("submit_lobby_result", {
       target_lobby: lobby.id,
-      final_score: score,
+      final_score: finalScore,
       final_accuracy: accuracy,
       final_wpm: wpm,
-      final_combo: maxCombo,
+      final_combo: finalMaxCombo,
     });
     if (rpcError) setError(rpcError.message);
     await loadRoom(lobby.id);
@@ -712,14 +735,19 @@ export default function MultiplayerPage() {
   const typeLine = (value: string) => {
     if (!canType || !currentLine) return;
     const normalized = normalizeText(value, gameMode === "expert", true, false);
+    let addedCorrect = 0;
+    let addedMistakes = 0;
     if (normalized.length > lastTypedLength.current) {
-      const at = normalized.length - 1;
-      if (normalized[at] === target[at]) setCorrect((old) => old + 1);
-      else {
-        setMistakes((old) => old + 1);
+      for (let at = lastTypedLength.current; at < normalized.length; at += 1) {
+        if (normalized[at] === target[at]) addedCorrect += 1;
+        else addedMistakes += 1;
+      }
+      if (addedCorrect) setCorrect((old) => old + addedCorrect);
+      if (addedMistakes) {
+        setMistakes((old) => old + addedMistakes);
         setCombo(0);
         if (gameMode === "survival")
-          setLives((value) => Math.max(0, value - 1));
+          setLives((currentLives) => Math.max(0, currentLives - addedMistakes));
       }
     }
     lastTypedLength.current = normalized.length;
@@ -729,14 +757,13 @@ export default function MultiplayerPage() {
       const nextCombo = combo + 1;
       setCombo(nextCombo);
       setMaxCombo((old) => Math.max(old, nextCombo));
-      setScore(
-        (old) => old + target.length * 10 + 300 + Math.min(900, nextCombo * 30),
-      );
+      const linePoints = target.length * 10 + 300 + Math.min(900, nextCombo * 30);
+      setScore((old) => old + linePoints);
       showLineFeedback("correct");
       setTyped("");
       lastTypedLength.current = 0;
       lastLineRef.current = lineIndex + 1;
-      if (lineIndex >= lyrics.length - 1) void finish();
+      if (lineIndex >= lyrics.length - 1) setAllLinesComplete(true);
       else {
         setTypedLineIndex(lineIndex + 1);
         setLineIndex((index) => index + 1);
@@ -1190,6 +1217,7 @@ export default function MultiplayerPage() {
                         ref={inputRef}
                         value={visibleTyped}
                         onChange={(event) => typeLine(event.target.value)}
+                        onPaste={(event) => event.preventDefault()}
                         disabled={!canType}
                         className="absolute inset-0 opacity-0"
                         autoComplete="off"

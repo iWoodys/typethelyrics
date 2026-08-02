@@ -1,14 +1,11 @@
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET() {
   try {
-    const supabase = createRouteHandlerClient({ cookies });
-
     // Get top 10 users by score - no auth needed
     const { data: topUsers, error: usersError } = await supabase
       .from("users")

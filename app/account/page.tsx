@@ -33,7 +33,7 @@ export default function AccountPage() {
       if (!authData.user) { router.replace('/auth'); return; }
       setUserId(authData.user.id);
       const [{ data: existingProfile, error: profileError }, { data: gameData }] = await Promise.all([
-        supabase.from('users').select('username,email,avatar_url,birth_date,gender,is_premium,premium_until').eq('id', authData.user.id).maybeSingle(),
+        supabase.rpc('get_my_profile').maybeSingle(),
         supabase.from('game_results').select('id,spotify_track_id,track_title,track_artist,image_url,score,accuracy,wpm,rank,mode,created_at').eq('user_id', authData.user.id).order('created_at', { ascending: false }),
       ]);
       let profileData = existingProfile;
@@ -41,14 +41,17 @@ export default function AccountPage() {
         const fallbackName = String(authData.user.user_metadata?.username || authData.user.email?.split('@')[0] || `jugador_${authData.user.id.slice(0, 6)}`)
           .replace(/[^a-zA-Z0-9_.-]/g, '_')
           .slice(0, 24);
-        const { data: repairedProfile, error: repairError } = await supabase.from('users').upsert({
+        const { error: repairError } = await supabase.from('users').upsert({
           id: authData.user.id,
           username: fallbackName.length >= 3 ? fallbackName : `jugador_${authData.user.id.slice(0, 6)}`,
           email: authData.user.email || '',
-        }, { onConflict: 'id' }).select('username,email,avatar_url,birth_date,gender,is_premium,premium_until').single();
-        if (repairError) setError(repairError.message); else profileData = repairedProfile;
+        }, { onConflict: 'id' });
+        const { data: repairedProfile, error: reloadError } = repairError
+          ? { data: null, error: repairError }
+          : await supabase.rpc('get_my_profile').single();
+        if (reloadError) setError(reloadError.message); else profileData = repairedProfile;
       } else if (profileError) setError(profileError.message);
-      if (profileData) setProfile(profileData);
+      if (profileData) setProfile(profileData as Profile);
       let resolvedGames = gameData || [];
       const missingIds = [...new Set(resolvedGames.filter(game => !game.track_title || game.track_title === 'Canción').map(game => game.spotify_track_id))];
       if (missingIds.length) {

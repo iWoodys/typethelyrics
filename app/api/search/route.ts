@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { searchTracks } from '@/lib/spotify';
+import { rateLimit } from '@/lib/rate-limit';
 
 export async function GET(request: Request) {
+  const retryAfter = rateLimit(request, 'search', 40);
+  if (retryAfter) return NextResponse.json({ error: 'Demasiadas búsquedas.' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } });
   const query = new URL(request.url).searchParams.get('q')?.trim();
   if (!query || query.length < 2) return NextResponse.json({ tracks: [] });
   try {

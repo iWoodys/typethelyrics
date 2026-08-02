@@ -1,9 +1,15 @@
-import SpotifyWebApi from 'spotify-web-api-node';
+type SpotifyImage = { url: string };
+type SpotifyArtist = { name: string };
+type SpotifyTrack = {
+  id: string;
+  name: string;
+  duration_ms: number;
+  artists: SpotifyArtist[];
+  album: { name: string; images: SpotifyImage[] };
+};
 
-const spotifyApi = new SpotifyWebApi({
-  clientId: process.env.SPOTIFY_CLIENT_ID,
-  clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
-});
+let cachedToken = '';
+let tokenExpiresAt = 0;
 
 export const checkSpotifyUrl = (url: string): { type: string | null; id: string | null } => {
   const regex = /^(?:spotify:(track|album|playlist):|https?:\/\/(?:[a-z]+\.)?spotify\.com\/(?:intl-[a-z]{2}(?:-[a-z]{2})?\/)?(track|playlist|album)\/)([a-zA-Z0-9]+)(?:[/?#]|$)/i;
@@ -20,27 +26,46 @@ export const checkSpotifyUrl = (url: string): { type: string | null; id: string 
 };
 
 export const getAccessToken = async () => {
-  try {
-    const data = await spotifyApi.clientCredentialsGrant();
-    spotifyApi.setAccessToken(data.body['access_token']);
-    return data.body['access_token'];
-  } catch (error) {
-    console.error('Error getting Spotify access token:', error);
-    throw error;
-  }
+  if (cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
+  const clientId = process.env.SPOTIFY_CLIENT_ID;
+  const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+  if (!clientId || !clientSecret) throw new Error('Spotify no está configurado.');
+  const response = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials',
+    cache: 'no-store',
+  });
+  if (!response.ok) throw new Error('No se pudo autenticar con Spotify.');
+  const data = await response.json() as { access_token: string; expires_in: number };
+  cachedToken = data.access_token;
+  tokenExpiresAt = Date.now() + Math.max(60, data.expires_in - 60) * 1000;
+  return cachedToken;
+};
+
+const spotifyFetch = async <T>(path: string): Promise<T> => {
+  const token = await getAccessToken();
+  const response = await fetch(`https://api.spotify.com/v1${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    next: { revalidate: 300 },
+  });
+  if (!response.ok) throw new Error(`Spotify respondió con estado ${response.status}.`);
+  return response.json() as Promise<T>;
 };
 
 export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') => {
   try {
-    await getAccessToken();
-    const track = await spotifyApi.getTrack(trackId);
+    const track = await spotifyFetch<SpotifyTrack>(`/tracks/${encodeURIComponent(trackId)}`);
 
-    const artist = track.body.artists.map(item => item.name).join(', ');
+    const artist = track.artists.map(item => item.name).join(', ');
     const params = new URLSearchParams({
-      track_name: track.body.name,
+      track_name: track.name,
       artist_name: artist,
-      album_name: track.body.album.name,
-      duration: Math.round(track.body.duration_ms / 1000).toString(),
+      album_name: track.album.name,
+      duration: Math.round(track.duration_ms / 1000).toString(),
     });
     const response = await fetch(`https://lrclib.net/api/get?${params}`, {
       headers: {
@@ -55,12 +80,12 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
 
     const data: { plainLyrics: string | null; syncedLyrics: string | null; instrumental: boolean } = await response.json();
     const trackDetails = {
-      track_name: track.body.name,
+      track_name: track.name,
       track_artist: artist,
-      track_album: track.body.album.name,
-      track_duration: formatDuration(track.body.duration_ms),
-      track_duration_ms: track.body.duration_ms,
-      album_image: track.body.album.images[0]?.url,
+      track_album: track.album.name,
+      track_duration: formatDuration(track.duration_ms),
+      track_duration_ms: track.duration_ms,
+      album_image: track.album.images[0]?.url,
     };
 
     const syncedLines = parseSyncedLyrics(data.syncedLyrics || '');
@@ -69,7 +94,7 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
 
     if (format === 'srt' && syncedLines.length) {
       lyrics = syncedLines.map((line, index) => {
-        const end = syncedLines[index + 1]?.timeMs ?? Math.min(line.timeMs + 5000, track.body.duration_ms);
+        const end = syncedLines[index + 1]?.timeMs ?? Math.min(line.timeMs + 5000, track.duration_ms);
         return `${index + 1}\n${formatSrtTime(line.timeMs)} --> ${formatSrtTime(end)}\n${line.words}`;
       }).join('\n\n');
     } else if (syncedLines.length) {
@@ -81,7 +106,8 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
     return {
       lyrics,
       syncType,
-      trackDetails
+      trackDetails,
+      syncedLyrics: syncedLines.map(line => ({ startTimeMs: line.timeMs, words: line.words })),
     };
   } catch (error) {
     console.error('Error getting lyrics:', error);
@@ -90,9 +116,10 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
 };
 
 export const searchTracks = async (query: string) => {
-  await getAccessToken();
-  const result = await spotifyApi.searchTracks(query, { limit: 8 });
-  return (result.body.tracks?.items || []).map(track => ({
+  const result = await spotifyFetch<{ tracks?: { items: SpotifyTrack[] } }>(
+    `/search?type=track&limit=8&q=${encodeURIComponent(query)}`,
+  );
+  return (result.tracks?.items || []).map(track => ({
     id: track.id,
     title: track.name,
     artist: track.artists.map(artist => artist.name).join(', '),
@@ -105,22 +132,24 @@ export const searchTracks = async (query: string) => {
 export const getTracksByIds = async (trackIds: string[]) => {
   const ids = [...new Set(trackIds)].filter(Boolean).slice(0, 50);
   if (!ids.length) return [];
-  await getAccessToken();
-  const results = await Promise.allSettled(ids.map(id => spotifyApi.getTrack(id)));
-  return results.flatMap(result => result.status === 'fulfilled' ? [{
-    id: result.value.body.id,
-    title: result.value.body.name,
-    artist: result.value.body.artists.map(artist => artist.name).join(', '),
-    image: result.value.body.album.images[0]?.url || null,
-  }] : []);
+  const result = await spotifyFetch<{ tracks: Array<SpotifyTrack | null> }>(
+    `/tracks?ids=${encodeURIComponent(ids.join(','))}`,
+  );
+  return result.tracks.filter((track): track is SpotifyTrack => Boolean(track)).map(track => ({
+    id: track.id,
+    title: track.name,
+    artist: track.artists.map(artist => artist.name).join(', '),
+    image: track.album.images[0]?.url || null,
+  }));
 };
 
 export const getPlaylistTracks = async (playlistId: string) => {
-  await getAccessToken();
-  const result = await spotifyApi.getPlaylistTracks(playlistId, { limit: 50 });
-  return result.body.items.flatMap(item => {
+  const result = await spotifyFetch<{ items: Array<{ track: SpotifyTrack | null }> }>(
+    `/playlists/${encodeURIComponent(playlistId)}/tracks?limit=50`,
+  );
+  return result.items.flatMap(item => {
     const track = item.track;
-    if (!track || !('album' in track)) return [];
+    if (!track) return [];
     return [{ id: track.id, title: track.name, artist: track.artists.map(artist => artist.name).join(', '), album: track.album.name, image: track.album.images[0]?.url || '', url: `https://open.spotify.com/track/${track.id}` }];
   });
 };
