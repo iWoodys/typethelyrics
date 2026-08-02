@@ -8,6 +8,8 @@ export async function POST(request: Request) {
   try {
     const { ids } = await request.json() as { ids?: string[] };
     if (!Array.isArray(ids) || !ids.length) return NextResponse.json({ tracks: [] });
+    if (ids.length > 50 || ids.some(id => typeof id !== 'string' || !/^[A-Za-z0-9]{10,30}$/.test(id)))
+      return NextResponse.json({ error: 'Lista de canciones inválida.' }, { status: 400 });
     const tracks = await getTracksByIds(ids);
     return NextResponse.json({ tracks });
   } catch (error) {

@@ -137,7 +137,7 @@ export const searchTracks = async (query: string) => {
 };
 
 export const getTracksByIds = async (trackIds: string[]) => {
-  const ids = [...new Set(trackIds)].filter(Boolean).slice(0, 50);
+  const ids = [...new Set(trackIds)].filter(id => /^[A-Za-z0-9]{10,30}$/.test(id)).slice(0, 50);
   if (!ids.length) return [];
   const result = await spotifyFetch<{ tracks: Array<SpotifyTrack | null> }>(
     `/tracks?ids=${encodeURIComponent(ids.join(','))}`,
@@ -151,11 +151,15 @@ export const getTracksByIds = async (trackIds: string[]) => {
 };
 
 export const getPlaylistTracks = async (playlistId: string, userToken: string) => {
-  const result = await spotifyFetch<{ items: Array<{ item?: SpotifyTrack | null; track?: SpotifyTrack | null }> }>(
-    `/playlists/${encodeURIComponent(playlistId)}/items?limit=50&market=AR`,
-    userToken,
-  );
-  return result.items.flatMap(item => {
+  const items: Array<{ item?: SpotifyTrack | null; track?: SpotifyTrack | null }> = [];
+  for (let offset = 0; offset < 1000; offset += 50) {
+    const page = await spotifyFetch<{ items: Array<{ item?: SpotifyTrack | null; track?: SpotifyTrack | null }>; next?: string | null }>(
+      `/playlists/${encodeURIComponent(playlistId)}/items?limit=50&offset=${offset}&market=AR`, userToken,
+    );
+    items.push(...page.items);
+    if (!page.next || page.items.length < 50) break;
+  }
+  return items.flatMap(item => {
     const track = item.item || item.track;
     if (!track) return [];
     return [{ id: track.id, title: track.name, artist: track.artists.map(artist => artist.name).join(', '), album: track.album.name, image: track.album.images[0]?.url || '', url: `https://open.spotify.com/track/${track.id}` }];

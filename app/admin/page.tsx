@@ -5,7 +5,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Check, Megaphone, Send, Shield, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-type Edit = { id: string; spotify_track_id: string; lyrics: unknown[]; users: { username: string } | null };
+type Edit = { id: string; user_id: string; spotify_track_id: string; lyrics: unknown[]; users: { username: string } | null };
 type Report = { id: string; spotify_track_id: string; observed_offset_ms: number; status: string };
 type Announcement = { id: string; title: string; body: string; created_at: string };
 
@@ -33,11 +33,18 @@ export default function AdminPage() {
     }
     setAllowed(true);
     const [a, b, c] = await Promise.all([
-      supabase.from("lyric_edits").select("id,spotify_track_id,lyrics,users(username)").eq("moderation_status", "pending").order("updated_at"),
+      supabase.from("lyric_edits").select("id,user_id,spotify_track_id,lyrics").eq("moderation_status", "pending").order("updated_at"),
       supabase.from("lyric_reports").select("id,spotify_track_id,observed_offset_ms,status").neq("status", "resolved").order("updated_at"),
       supabase.from("announcements").select("id,title,body,created_at").eq("is_active", true).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
-    setEdits((a.data || []) as unknown as Edit[]);
+    if (a.error || b.error || c.error) setMessage(a.error?.message || b.error?.message || c.error?.message || "No se pudo cargar el panel.");
+    const editRows = (a.data || []) as Omit<Edit, "users">[];
+    const userIds = [...new Set(editRows.map((row) => row.user_id))];
+    const { data: authors } = userIds.length
+      ? await supabase.from("users").select("id,username").in("id", userIds)
+      : { data: [] as { id: string; username: string }[] };
+    const names = new Map((authors || []).map((row) => [row.id, row.username]));
+    setEdits(editRows.map((row) => ({ ...row, users: { username: names.get(row.user_id) || "Jugador" } })));
     setReports((b.data || []) as Report[]);
     setAnnouncement((c.data as Announcement | null) || null);
   }, []);

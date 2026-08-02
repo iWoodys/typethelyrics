@@ -486,3 +486,7 @@ create index if not exists lobbies_code_idx on public.lobbies(code);
 create index if not exists lobby_players_score_idx on public.lobby_players(lobby_id, score desc);
 do $$ begin alter publication supabase_realtime add table public.lobbies; exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.lobby_players; exception when duplicate_object then null; end $$;
+
+-- Cierre del esquema base: esta firma histórica no debe quedar disponible.
+-- La función validada de 13 argumentos se instala con migrations/007.
+drop function if exists public.save_game_result(text,text,text,text,text,integer,integer,numeric,integer);

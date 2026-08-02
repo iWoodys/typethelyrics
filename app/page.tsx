@@ -446,6 +446,7 @@ export default function Home() {
       (Date.now() - startedAt - pausedTotalRef.current - openPause) / 60000,
       1 / 60,
     );
+    const activeElapsedMs = Math.max(1000, Math.round(elapsedMinutes * 60000));
     const accuracy = finalCorrect + finalMistakes
       ? (finalCorrect / (finalCorrect + finalMistakes)) * 100
       : 0;
@@ -504,7 +505,7 @@ export default function Home() {
       );
     void supabase.auth.getUser().then(async ({ data }) => {
       if (!data.user || !trackId) return;
-      await supabase.rpc("save_game_result", {
+      const { error: saveError } = await supabase.rpc("save_game_result", {
         target_track_id: trackId,
         target_title: track?.track_name || "Canción",
         target_artist: track?.track_artist || "",
@@ -517,8 +518,9 @@ export default function Home() {
         target_duration_ms: track?.track_duration_ms || 0,
         target_characters: lyrics.reduce((sum, line) => sum + line.words.length, 0),
         target_lines: lyrics.length,
-        target_elapsed_ms: Math.max(1000, Date.now() - startedAt),
+        target_elapsed_ms: activeElapsedMs,
       });
+      if (saveError) setError(`La partida terminó, pero no se guardó: ${saveError.message}`);
     });
   }, [
     correct,
@@ -835,10 +837,8 @@ export default function Home() {
           loadedLyrics = personal.data.lyrics as SyncedLyric[];
           loadedOrigin = "personal";
         } else {
-          const { data: community } = await supabase.from("lyric_edits")
-            .select("lyrics").eq("spotify_track_id", match[1]).eq("is_public", true)
-            .eq("moderation_status", "approved")
-            .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+          const { data: communityRows } = await supabase.rpc("get_approved_lyrics", { target_track_id: match[1] });
+          const community = communityRows?.[0];
           if (Array.isArray(community?.lyrics) && community.lyrics.length) {
             loadedLyrics = validateSyncedLyrics(community.lyrics, data.trackDetails.track_duration_ms);
             loadedOrigin = "community";

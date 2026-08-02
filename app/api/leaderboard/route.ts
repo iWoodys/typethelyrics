@@ -6,12 +6,7 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    // Get top 10 users by score - no auth needed
-    const { data: topUsers, error: usersError } = await supabase
-      .from("users")
-      .select("username, score")
-      .order("score", { ascending: false })
-      .limit(10);
+    const { data: topUsers, error: usersError } = await supabase.rpc("get_top_typists");
 
     if (usersError) {
       console.error("Error fetching users:", usersError);
@@ -21,19 +16,7 @@ export async function GET() {
       );
     }
 
-    // First get top 10 songs
-    const { data: topSongs, error: songsError } = await supabase
-      .from("songs")
-      .select(
-        `
-        title,
-        artist,
-        play_count,
-        spotify_url
-      `,
-      )
-      .order("play_count", { ascending: false })
-      .limit(10);
+    const { data: topSongs, error: songsError } = await supabase.rpc("get_top_songs");
 
     if (songsError) {
       console.error("Error fetching songs:", songsError);
@@ -43,20 +26,11 @@ export async function GET() {
       );
     }
 
-    // Transform the songs data
-    const transformedSongs =
-      topSongs?.map((song) => ({
-        title: song.title,
-        artist: song.artist,
-        play_count: song.play_count,
-        spotify_url: song.spotify_url,
-      })) || [];
-
     // Return the response with no-cache headers
     return new NextResponse(
       JSON.stringify({
         topUsers: topUsers || [],
-        topSongs: transformedSongs,
+        topSongs: topSongs || [],
       }),
       {
         headers: {

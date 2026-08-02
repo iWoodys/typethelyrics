@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- user-uploaded Supabase/Spotify URLs are already size-constrained */
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -34,25 +35,18 @@ export default function AccountPage() {
       setUserId(authData.user.id);
       const [{ data: existingProfile, error: profileError }, { data: gameData }] = await Promise.all([
         supabase.rpc('get_my_profile').maybeSingle(),
-        supabase.from('game_results').select('id,spotify_track_id,track_title,track_artist,image_url,score,accuracy,wpm,rank,mode,created_at').eq('user_id', authData.user.id).order('created_at', { ascending: false }),
+        supabase.rpc('get_my_game_results'),
       ]);
       let profileData = existingProfile;
       if (!profileError && !profileData) {
-        const fallbackName = String(authData.user.user_metadata?.username || authData.user.email?.split('@')[0] || `jugador_${authData.user.id.slice(0, 6)}`)
-          .replace(/[^a-zA-Z0-9_.-]/g, '_')
-          .slice(0, 24);
-        const { error: repairError } = await supabase.from('users').upsert({
-          id: authData.user.id,
-          username: fallbackName.length >= 3 ? fallbackName : `jugador_${authData.user.id.slice(0, 6)}`,
-          email: authData.user.email || '',
-        }, { onConflict: 'id' });
+        const { error: repairError } = await supabase.rpc('repair_my_profile');
         const { data: repairedProfile, error: reloadError } = repairError
           ? { data: null, error: repairError }
           : await supabase.rpc('get_my_profile').single();
         if (reloadError) setError(reloadError.message); else profileData = repairedProfile;
       } else if (profileError) setError(profileError.message);
       if (profileData) setProfile(profileData as Profile);
-      let resolvedGames = gameData || [];
+      let resolvedGames = (gameData || []) as GameRow[];
       const missingIds = [...new Set(resolvedGames.filter(game => !game.track_title || game.track_title === 'Canción').map(game => game.spotify_track_id))];
       if (missingIds.length) {
         try {
@@ -85,7 +79,7 @@ export default function AccountPage() {
     event.preventDefault(); if (!profile || !userId) return;
     setSaving(true); setError(''); setMessage('');
     const username = profile.username.trim();
-    if (username.length < 3) { setError('El nombre debe tener al menos 3 caracteres.'); setSaving(false); return; }
+    if (!/^[A-Za-z0-9_.-]{3,24}$/.test(username)) { setError('Usá entre 3 y 24 letras, números, puntos, guiones o guiones bajos.'); setSaving(false); return; }
     const { error: updateError } = await supabase.from('users').update({ username, birth_date: profile.birth_date || null, gender: profile.gender || null }).eq('id', userId);
     if (updateError) setError(updateError.code === '23505' ? 'Ese nombre de usuario ya está ocupado.' : updateError.message);
     else setMessage('Perfil actualizado correctamente.');

@@ -160,6 +160,7 @@ export default function MultiplayerPage() {
   const audioReadySentRef = useRef<boolean | null>(null);
   const [playbackPosition, setPlaybackPosition] = useState<number | null>(null);
   const [playbackUpdatedAt, setPlaybackUpdatedAt] = useState(0);
+  const [playbackPaused, setPlaybackPaused] = useState(true);
   const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
 
   const loadRoom = useCallback(async (roomId: string) => {
@@ -199,6 +200,12 @@ export default function MultiplayerPage() {
         .select("id,username,avatar_url,is_premium,premium_until")
         .eq("id", user.id)
         .maybeSingle();
+
+      if (!userProfile) {
+        const repaired = await supabase.rpc("repair_my_profile");
+        userProfile = repaired.data as Profile | null;
+        if (repaired.error) setError(`No pudimos crear tu perfil: ${repaired.error.message}`);
+      }
 
       // Repara cuentas antiguas o perfiles que no fueron creados por el trigger.
       if (!userProfile) {
@@ -510,12 +517,14 @@ export default function MultiplayerPage() {
   useEffect(() => {
     audioReadySentRef.current = null;
     setPlaybackPosition(null);
+    setPlaybackPaused(true);
   }, [lobby?.spotify_track_id]);
   useEffect(() => {
     const onPlayback = (event: MessageEvent) => {
       if (event.origin !== "https://open.spotify.com" || event.data?.type !== "playback_update") return;
       const payload = event.data?.payload;
       if (!lobby) return;
+      setPlaybackPaused(Boolean(payload?.isPaused));
       if (typeof payload?.position === "number") {
         setPlaybackPosition(payload.position);
         setPlaybackUpdatedAt(Date.now());
@@ -574,7 +583,7 @@ export default function MultiplayerPage() {
   const gamePosition = wallPosition;
   const estimatedPlaybackPosition = playbackPosition === null
     ? null
-    : playbackPosition + Math.max(0, clock - playbackUpdatedAt);
+    : playbackPosition + (playbackPaused ? 0 : Math.max(0, clock - playbackUpdatedAt));
   const playbackDrift = estimatedPlaybackPosition === null
     ? null
     : estimatedPlaybackPosition - gamePosition;
@@ -611,6 +620,7 @@ export default function MultiplayerPage() {
     !localFinished &&
     !allLinesComplete &&
     lineIndex <= timedIndex &&
+    !playbackPaused &&
     synchronized;
   const currentWord = useMemo(() => {
     if (!currentLine) return -1;

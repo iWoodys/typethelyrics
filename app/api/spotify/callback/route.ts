@@ -20,9 +20,10 @@ export async function GET(request: Request) {
     cache: 'no-store',
   });
   if (!tokenResponse.ok) return NextResponse.redirect(`${appOrigin}/?spotify=error`);
-  const token = await tokenResponse.json() as { access_token:string; expires_in:number };
+  const token = await tokenResponse.json() as { access_token:string; expires_in:number; refresh_token?:string };
   const response = NextResponse.redirect(`${appOrigin}/?spotify=connected`);
   response.cookies.delete('spotify_oauth_state');
   response.cookies.set('spotify_user_token', token.access_token, { httpOnly:true, secure:appOrigin.startsWith('https:'), sameSite:'lax', path:'/', maxAge:Math.max(60,token.expires_in-60) });
+  if (token.refresh_token) response.cookies.set('spotify_refresh_token', token.refresh_token, { httpOnly:true, secure:appOrigin.startsWith('https:'), sameSite:'lax', path:'/', maxAge:60*60*24*180 });
   return response;
 }
