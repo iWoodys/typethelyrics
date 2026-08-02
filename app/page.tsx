@@ -37,6 +37,7 @@ import {
   Scissors,
   Search,
   Settings2,
+  ShieldCheck,
   Sparkles,
   Star,
   Target,
@@ -189,6 +190,7 @@ export default function Home() {
   const [headerProfile, setHeaderProfile] = useState<HeaderProfile | null>(
     null,
   );
+  const [isAdmin, setIsAdmin] = useState(false);
   const undoRef = useRef<SyncedLyric[][]>([]);
   const redoRef = useRef<SyncedLyric[][]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -225,13 +227,14 @@ export default function Home() {
       setAuthUser(user);
       if (!user) {
         setHeaderProfile(null);
+        setIsAdmin(false);
         return;
       }
-      const { data } = await supabase
-        .from("users")
-        .select("username,avatar_url,is_premium,premium_until")
-        .eq("id", user.id)
-        .maybeSingle();
+      const [{ data }, { data: admin, error: adminError }] = await Promise.all([
+        supabase.from("users").select("username,avatar_url,is_premium,premium_until").eq("id", user.id).maybeSingle(),
+        supabase.rpc("is_admin"),
+      ]);
+      setIsAdmin(!adminError && admin === true);
       setHeaderProfile(
         data || {
           username:
@@ -1060,6 +1063,15 @@ export default function Home() {
             </a>
           </nav>
           <div className="flex gap-2">
+            {isAdmin && (
+              <Link
+                href="/admin"
+                className="flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-400/20"
+              >
+                <ShieldCheck size={17} />
+                <span className="hidden sm:inline">Admin</span>
+              </Link>
+            )}
             <Link
               href="/multiplayer"
               className="flex items-center gap-2 rounded-xl border border-violet-400/20 bg-violet-400/10 px-3 py-2 text-sm text-violet-200 hover:bg-violet-400/20"

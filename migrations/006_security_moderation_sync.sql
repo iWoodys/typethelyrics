@@ -20,8 +20,6 @@ create policy "Users view own or approved lyric edits" on public.lyric_edits for
   using (user_id = auth.uid() or (is_public and moderation_status = 'approved') or public.is_admin());
 drop policy if exists "Admins view lyric reports" on public.lyric_reports;
 create policy "Admins view lyric reports" on public.lyric_reports for select to authenticated using (public.is_admin());
-drop policy if exists "Admins view lyric reports" on public.lyric_reports;
-create policy "Admins view lyric reports" on public.lyric_reports for select to authenticated using (public.is_admin());
 revoke insert, update on public.lyric_edits from authenticated;
 
 create or replace function public.save_lyric_edit(
@@ -64,16 +62,6 @@ begin
 end; $$;
 revoke all on function public.moderate_lyric_edit(uuid,text) from public;
 grant execute on function public.moderate_lyric_edit(uuid,text) to authenticated;
-
-create or replace function public.resolve_lyric_report(target_report uuid, decision text)
-returns void language plpgsql security definer set search_path = public as $$
-begin
-  if not public.is_admin() then raise exception 'Acceso denegado.'; end if;
-  if decision not in ('reviewed','resolved') then raise exception 'Estado inválido.'; end if;
-  update public.lyric_reports set status=decision, updated_at=now() where id=target_report;
-end; $$;
-revoke all on function public.resolve_lyric_report(uuid,text) from public;
-grant execute on function public.resolve_lyric_report(uuid,text) to authenticated;
 
 create or replace function public.resolve_lyric_report(target_report uuid, decision text)
 returns void language plpgsql security definer set search_path = public as $$
