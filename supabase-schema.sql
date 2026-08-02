@@ -83,9 +83,22 @@ create table if not exists public.lyric_edits (
   unique (user_id, spotify_track_id)
 );
 
+create table if not exists public.lyric_reports (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  spotify_track_id text not null,
+  source_id bigint,
+  observed_offset_ms integer not null default 0 check (observed_offset_ms between -15000 and 15000),
+  status text not null default 'open' check (status in ('open', 'reviewed', 'resolved')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, spotify_track_id)
+);
+
 alter table public.game_results enable row level security;
 alter table public.favorites enable row level security;
 alter table public.lyric_edits enable row level security;
+alter table public.lyric_reports enable row level security;
 
 create policy "Public game rankings" on public.game_results for select using (true);
 create policy "Users save their results" on public.game_results for insert with check (auth.uid() = user_id);
@@ -96,6 +109,12 @@ create policy "Users view own or public lyric edits" on public.lyric_edits for s
 create policy "Users create lyric edits" on public.lyric_edits for insert with check (auth.uid() = user_id);
 create policy "Users update lyric edits" on public.lyric_edits for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "Users delete lyric edits" on public.lyric_edits for delete using (auth.uid() = user_id);
+drop policy if exists "Users view own lyric reports" on public.lyric_reports;
+create policy "Users view own lyric reports" on public.lyric_reports for select using (auth.uid() = user_id);
+drop policy if exists "Users create lyric reports" on public.lyric_reports;
+create policy "Users create lyric reports" on public.lyric_reports for insert with check (auth.uid() = user_id);
+drop policy if exists "Users update own lyric reports" on public.lyric_reports;
+create policy "Users update own lyric reports" on public.lyric_reports for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 create index if not exists game_results_track_score_idx on public.game_results (spotify_track_id, score desc);
 create index if not exists game_results_user_created_idx on public.game_results (user_id, created_at desc);
@@ -165,11 +184,13 @@ create table if not exists public.lobby_players (
   lobby_id uuid not null references public.lobbies(id) on delete cascade,
   user_id uuid not null references public.users(id) on delete cascade,
   ready boolean not null default false,
+  audio_ready boolean not null default false,
   score integer not null default 0, accuracy numeric(5,2) not null default 0,
   wpm integer not null default 0, max_combo integer not null default 0,
   finished_at timestamptz, joined_at timestamptz not null default now(),
   primary key (lobby_id, user_id)
 );
+alter table public.lobby_players add column if not exists audio_ready boolean not null default false;
 
 alter table public.lobbies enable row level security;
 alter table public.lobby_players enable row level security;
@@ -207,6 +228,15 @@ create or replace function public.set_lobby_ready(target_lobby uuid, is_ready bo
 returns void language plpgsql security definer set search_path = public as $$
 begin update public.lobby_players set ready = is_ready where lobby_id = target_lobby and user_id = auth.uid(); end; $$;
 
+create or replace function public.set_lobby_audio_ready(target_lobby uuid, is_ready boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.lobby_players set audio_ready = is_ready
+  where lobby_id = target_lobby and user_id = auth.uid()
+    and exists (select 1 from public.lobbies where id = target_lobby and status = 'waiting');
+  if not found then raise exception 'No se pudo confirmar el audio.'; end if;
+end; $$;
+
 drop function if exists public.configure_lobby(uuid, text, text, text, text, text, integer, jsonb);
 create or replace function public.configure_lobby(target_lobby uuid, new_track_id text, new_track_url text,
   new_title text, new_artist text, new_image text, new_duration integer, new_lyrics jsonb, new_mode text)
@@ -218,7 +248,7 @@ begin
     updated_at = now()
   where id = target_lobby and host_id = auth.uid() and status = 'waiting';
   if not found then raise exception 'Solo el anfitrión puede elegir la canción.'; end if;
-  update public.lobby_players set ready = (user_id = auth.uid()), score = 0, accuracy = 0, wpm = 0,
+  update public.lobby_players set ready = (user_id = auth.uid()), audio_ready = false, score = 0, accuracy = 0, wpm = 0,
     max_combo = 0, finished_at = null where lobby_id = target_lobby;
 end; $$;
 
@@ -239,6 +269,8 @@ declare begins timestamptz := now() + interval '5 seconds';
 begin
   if exists (select 1 from public.lobby_players where lobby_id = target_lobby and ready = false) then
     raise exception 'Todos los jugadores deben estar listos.'; end if;
+  if exists (select 1 from public.lobby_players where lobby_id = target_lobby and audio_ready = false) then
+    raise exception 'Todos deben iniciar el audio de Spotify antes de comenzar.'; end if;
   update public.lobbies set status = 'countdown', start_at = begins, updated_at = now()
   where id = target_lobby and host_id = auth.uid() and spotify_track_id is not null and status = 'waiting';
   if not found then raise exception 'No se puede iniciar esta sala.'; end if;
@@ -294,7 +326,7 @@ begin
   update public.lobbies set status = 'waiting', spotify_track_id = null, track_url = null,
     track_title = null, track_artist = null, image_url = null, duration_ms = null,
     lyrics = '[]'::jsonb, start_at = null, updated_at = now() where id = target_lobby;
-  update public.lobby_players set ready = (user_id = room.host_id), score = 0, accuracy = 0,
+  update public.lobby_players set ready = (user_id = room.host_id), audio_ready = false, score = 0, accuracy = 0,
     wpm = 0, max_combo = 0, finished_at = null where lobby_id = target_lobby;
 end; $$;
 
@@ -335,6 +367,7 @@ end; $$;
 grant execute on function public.create_lobby() to authenticated;
 grant execute on function public.join_lobby(text) to authenticated;
 grant execute on function public.set_lobby_ready(uuid, boolean) to authenticated;
+grant execute on function public.set_lobby_audio_ready(uuid, boolean) to authenticated;
 grant execute on function public.configure_lobby(uuid, text, text, text, text, text, integer, jsonb, text) to authenticated;
 grant execute on function public.set_lobby_mode(uuid, text) to authenticated;
 grant execute on function public.start_lobby(uuid) to authenticated;
@@ -446,7 +479,7 @@ begin
   update public.lobbies set status = 'waiting', spotify_track_id = null, track_url = null,
     track_title = null, track_artist = null, image_url = null, duration_ms = null,
     lyrics = '[]'::jsonb, start_at = null, updated_at = now() where id = target_lobby;
-  update public.lobby_players set ready = (user_id = room.host_id), score = 0, accuracy = 0,
+  update public.lobby_players set ready = (user_id = room.host_id), audio_ready = false, score = 0, accuracy = 0,
     wpm = 0, max_combo = 0, finished_at = null where lobby_id = target_lobby;
 end; $$;
 create index if not exists lobbies_code_idx on public.lobbies(code);

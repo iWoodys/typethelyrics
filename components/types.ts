@@ -3,6 +3,11 @@ export interface LyricsResponse {
   syncType: string;
   syncedLyrics: { startTimeMs: number; words: string; }[];
   trackDetails: TrackDetails;
+  lyricsSource?: {
+    provider: "LRCLIB";
+    id: number;
+    duration: number;
+  };
 }
 
 export interface TrackDetails {

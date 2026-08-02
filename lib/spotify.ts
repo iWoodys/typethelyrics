@@ -78,7 +78,13 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
       throw new Error('No lyrics found');
     }
 
-    const data: { plainLyrics: string | null; syncedLyrics: string | null; instrumental: boolean } = await response.json();
+    const data: {
+      id: number;
+      duration: number;
+      plainLyrics: string | null;
+      syncedLyrics: string | null;
+      instrumental: boolean;
+    } = await response.json();
     const trackDetails = {
       track_name: track.name,
       track_artist: artist,
@@ -108,6 +114,7 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
       syncType,
       trackDetails,
       syncedLyrics: syncedLines.map(line => ({ startTimeMs: line.timeMs, words: line.words })),
+      lyricsSource: { provider: 'LRCLIB' as const, id: data.id, duration: data.duration },
     };
   } catch (error) {
     console.error('Error getting lyrics:', error);

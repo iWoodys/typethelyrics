@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { checkSpotifyUrl, getLyrics } from '@/lib/spotify';
 import { rateLimit } from '@/lib/rate-limit';
+import { validateSyncedLyrics } from '@/lib/lyrics';
 
 export async function POST(request: Request) {
   const retryAfter = rateLimit(request, 'lyrics', 15);
@@ -41,11 +42,16 @@ export async function POST(request: Request) {
       );
     }
 
+    const syncedLyrics = validateSyncedLyrics(
+      regularLyrics.syncedLyrics,
+      regularLyrics.trackDetails.track_duration_ms,
+    );
     return NextResponse.json({
       lyrics: regularLyrics.lyrics,
       syncType: regularLyrics.syncType,
-      syncedLyrics: regularLyrics.syncedLyrics,
-      trackDetails: regularLyrics.trackDetails
+      syncedLyrics,
+      trackDetails: regularLyrics.trackDetails,
+      lyricsSource: regularLyrics.lyricsSource,
     });
   } catch (error) {
     console.error('Error getting lyrics:', error);

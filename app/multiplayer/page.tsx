@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Crown,
   Copy,
@@ -59,6 +60,7 @@ type Player = {
   lobby_id: string;
   user_id: string;
   ready: boolean;
+  audio_ready: boolean;
   score: number;
   accuracy: number;
   wpm: number;
@@ -89,12 +91,15 @@ function Avatar({
 }) {
   const dimensions =
     size === "lg" ? "h-20 w-20" : size === "sm" ? "h-9 w-9" : "h-12 w-12";
+  const pixels = size === "lg" ? 80 : size === "sm" ? 36 : 48;
   return (
     <div className="flex shrink-0 flex-col items-center gap-1">
       {profile.avatar_url ? (
-        <img
+        <Image
           src={profile.avatar_url}
           alt=""
+          width={pixels}
+          height={pixels}
           className={`${dimensions} rounded-2xl border border-white/10 object-cover`}
         />
       ) : (
@@ -152,6 +157,9 @@ export default function MultiplayerPage() {
   const lastTypedLength = useRef(0);
   const lastProgressRef = useRef("");
   const publishingProgressRef = useRef(false);
+  const audioReadySentRef = useRef<boolean | null>(null);
+  const [playbackPosition, setPlaybackPosition] = useState<number | null>(null);
+  const [playbackUpdatedAt, setPlaybackUpdatedAt] = useState(0);
   const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
 
   const loadRoom = useCallback(async (roomId: string) => {
@@ -160,7 +168,7 @@ export default function MultiplayerPage() {
       supabase
         .from("lobby_players")
         .select(
-          "lobby_id,user_id,ready,score,accuracy,wpm,max_combo,finished_at,users!lobby_players_user_id_fkey(id,username,avatar_url,is_premium,premium_until)",
+          "lobby_id,user_id,ready,audio_ready,score,accuracy,wpm,max_combo,finished_at,users!lobby_players_user_id_fkey(id,username,avatar_url,is_premium,premium_until)",
         )
         .eq("lobby_id", roomId)
         .order("joined_at"),
@@ -500,6 +508,29 @@ export default function MultiplayerPage() {
     [],
   );
   useEffect(() => {
+    audioReadySentRef.current = null;
+    setPlaybackPosition(null);
+  }, [lobby?.spotify_track_id]);
+  useEffect(() => {
+    const onPlayback = (event: MessageEvent) => {
+      if (event.origin !== "https://open.spotify.com" || event.data?.type !== "playback_update") return;
+      const payload = event.data?.payload;
+      if (!lobby) return;
+      if (typeof payload?.position === "number") {
+        setPlaybackPosition(payload.position);
+        setPlaybackUpdatedAt(Date.now());
+      }
+      if (lobby.status !== "waiting") return;
+      const ready = !payload?.isPaused;
+      if (audioReadySentRef.current === ready) return;
+      audioReadySentRef.current = ready;
+      void supabase.rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: ready })
+        .then(() => loadRoom(lobby.id));
+    };
+    window.addEventListener("message", onPlayback);
+    return () => window.removeEventListener("message", onPlayback);
+  }, [lobby, loadRoom]);
+  useEffect(() => {
     if (!lobby?.start_at || !["countdown", "playing"].includes(lobby.status))
       return;
     const tick = () => {
@@ -541,6 +572,13 @@ export default function MultiplayerPage() {
   // El reloj compartido manda: una pausa o reinicio local de Spotify nunca puede
   // atrasar las letras ni extender la partida para un solo jugador.
   const gamePosition = wallPosition;
+  const estimatedPlaybackPosition = playbackPosition === null
+    ? null
+    : playbackPosition + Math.max(0, clock - playbackUpdatedAt);
+  const playbackDrift = estimatedPlaybackPosition === null
+    ? null
+    : estimatedPlaybackPosition - gamePosition;
+  const synchronized = playbackDrift === null || gamePosition < 5_000 || Math.abs(playbackDrift) <= 1_500;
   const lyrics = useMemo(() => lobby?.lyrics || [], [lobby?.lyrics]);
   const gameMode: GameMode = lobby?.game_mode || "rhythm";
   const timedIndex = useMemo(() => {
@@ -572,7 +610,8 @@ export default function MultiplayerPage() {
     singerStarted &&
     !localFinished &&
     !allLinesComplete &&
-    lineIndex <= timedIndex;
+    lineIndex <= timedIndex &&
+    synchronized;
   const currentWord = useMemo(() => {
     if (!currentLine) return -1;
     const next =
@@ -782,6 +821,8 @@ export default function MultiplayerPage() {
   const me = players.find((player) => player.user_id === authUser?.id);
   const allReady =
     players.length > 0 && players.every((player) => player.ready);
+  const allAudioReady =
+    players.length > 0 && players.every((player) => player.audio_ready);
 
   if (loading)
     return (
@@ -1034,9 +1075,11 @@ export default function MultiplayerPage() {
                         className="flex items-center gap-3 rounded-xl border border-white/10 bg-black/20 p-3 text-left hover:border-violet-400/50 disabled:opacity-50"
                       >
                         {song.image ? (
-                          <img
+                          <Image
                             src={song.image}
                             alt=""
+                            width={48}
+                            height={48}
                             className="h-12 w-12 rounded-lg object-cover"
                           />
                         ) : (
@@ -1087,10 +1130,13 @@ export default function MultiplayerPage() {
                   <span className="mt-2 inline-block rounded-full bg-violet-500/15 px-3 py-1 text-xs font-bold text-violet-300">
                     {GAME_MODE_DETAILS[gameMode].name}
                   </span>
+                  <p className="mt-3 text-sm text-amber-200">
+                    Presioná Play en Spotify. La partida se habilita cuando todos tengan audio.
+                  </p>
                 </div>
                 {lobby.host_id === authUser.id ? (
                   <button
-                    disabled={!allReady}
+                    disabled={!allReady || !allAudioReady}
                     onClick={startLobby}
                     className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30"
                   >
@@ -1139,6 +1185,11 @@ export default function MultiplayerPage() {
                         Combo <b className="text-cyan-300">{combo}x</b>
                       </span>
                     </div>
+                    {!synchronized && (
+                      <div role="status" className="mb-4 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-center text-sm text-amber-100">
+                        Resincronizando Spotify ({Math.round(playbackDrift || 0)} ms). La escritura se reanudará cuando el audio vuelva al tiempo de la sala.
+                      </div>
+                    )}
                     <div
                       onClick={() => inputRef.current?.focus()}
                       className={`relative min-h-[330px] cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] p-6 text-center transition-all duration-200 sm:p-10 ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
@@ -1255,11 +1306,7 @@ export default function MultiplayerPage() {
                     <span className="text-xs text-zinc-500">
                       {inGame
                         ? `${player.accuracy}% · ${player.wpm} ppm`
-                        : player.user_id === lobby.host_id
-                          ? "Anfitrión"
-                          : player.ready
-                            ? "Listo"
-                            : "Preparándose"}
+                        : `${player.user_id === lobby.host_id ? "Anfitrión" : player.ready ? "Listo" : "Preparándose"} · ${player.audio_ready ? "audio listo" : "sin audio"}`}
                     </span>
                   </div>
                   {inGame ? (
@@ -1267,9 +1314,7 @@ export default function MultiplayerPage() {
                       {player.score.toLocaleString()}
                     </b>
                   ) : (
-                    player.ready && (
-                      <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                    )
+                    <span className={`h-2 w-2 rounded-full ${player.ready && player.audio_ready ? "bg-emerald-400" : "bg-amber-300"}`} />
                   )}
                 </div>
               ))}

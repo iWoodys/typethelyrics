@@ -11,6 +11,7 @@ import {
 } from "react";
 import type { User } from "@supabase/supabase-js";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Accessibility,
   Award,
@@ -58,6 +59,8 @@ import {
   rankFor,
 } from "@/lib/game";
 import { supabase } from "@/lib/supabase";
+import { validateSyncedLyrics } from "@/lib/lyrics";
+import { readStoredJson, writeStoredJson } from "@/lib/safe-storage";
 
 type SongCard = {
   id: string;
@@ -123,6 +126,8 @@ const LS = {
   favorites: "ttl-favorites-v2",
   stats: "ttl-stats-v2",
   edits: "ttl-edits-v2",
+  offsets: "ttl-song-offsets-v1",
+  originals: "ttl-original-lyrics-v1",
   settings: "ttl-settings-v2",
 };
 
@@ -133,6 +138,10 @@ export default function Home() {
   const [lyrics, setLyrics] = useState<SyncedLyric[]>([]);
   const [position, setPosition] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [sourceLyrics, setSourceLyrics] = useState<SyncedLyric[]>([]);
+  const [lyricsSource, setLyricsSource] = useState<LyricsResponse["lyricsSource"]>(undefined);
+  const [lyricsOrigin, setLyricsOrigin] = useState<"LRCLIB" | "personal" | "community">("LRCLIB");
+  const [syncMessage, setSyncMessage] = useState("");
   const [mode, setMode] = useState<GameMode>("rhythm");
   const [lineIndex, setLineIndex] = useState(0);
   const [typed, setTyped] = useState("");
@@ -210,7 +219,6 @@ export default function Home() {
     setFontScale(saved.fontScale);
     setHighContrast(saved.highContrast);
     setReducedMotion(saved.reducedMotion);
-    setOffset(saved.offset);
   }, []);
   useEffect(() => {
     const loadProfile = async (user: User | null) => {
@@ -256,9 +264,15 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem(
       LS.settings,
-      JSON.stringify({ fontScale, highContrast, reducedMotion, offset }),
+      JSON.stringify({ fontScale, highContrast, reducedMotion }),
     );
-  }, [fontScale, highContrast, reducedMotion, offset]);
+  }, [fontScale, highContrast, reducedMotion]);
+  useEffect(() => {
+    if (!trackId) return;
+    const offsets = JSON.parse(localStorage.getItem(LS.offsets) || "{}") as Record<string, number>;
+    offsets[trackId] = offset;
+    localStorage.setItem(LS.offsets, JSON.stringify(offsets));
+  }, [offset, trackId]);
   useEffect(() => {
     if (!trackId) return;
     fetch(`/api/rankings?trackId=${trackId}&mode=${mode}`)
@@ -447,6 +461,10 @@ export default function Home() {
         target_wpm: wpm,
         target_accuracy: final.accuracy,
         target_combo: finalMaxCombo,
+        target_duration_ms: track?.track_duration_ms || 0,
+        target_characters: lyrics.reduce((sum, line) => sum + line.words.length, 0),
+        target_lines: lyrics.length,
+        target_elapsed_ms: Math.max(1000, Date.now() - startedAt),
       });
     });
   }, [
@@ -459,6 +477,7 @@ export default function Home() {
     startedAt,
     track,
     trackId,
+    lyrics,
   ]);
 
   useEffect(() => {
@@ -728,12 +747,41 @@ export default function Home() {
         throw new Error(
           data.error || "No encontramos letras para esta canción.",
         );
-      const edits = JSON.parse(
-        localStorage.getItem(LS.edits) || "{}",
-      ) as Record<string, SyncedLyric[]>;
+      const edits = readStoredJson<Record<string, SyncedLyric[]>>(LS.edits, {});
+      const originals = readStoredJson<Record<string, boolean>>(LS.originals, {});
+      const offsets = readStoredJson<Record<string, number>>(LS.offsets, {});
+      const originalLyrics = validateSyncedLyrics(data.syncedLyrics, data.trackDetails.track_duration_ms);
+      let loadedLyrics = originalLyrics;
+      let loadedOrigin: "LRCLIB" | "personal" | "community" = "LRCLIB";
+      if (!originals[match[1]] && edits[match[1]]?.length) {
+        loadedLyrics = edits[match[1]];
+        loadedOrigin = "personal";
+      } else if (!originals[match[1]]) {
+        const { data: authData } = await supabase.auth.getUser();
+        const personal = authData.user
+          ? await supabase.from("lyric_edits").select("lyrics").eq("user_id", authData.user.id).eq("spotify_track_id", match[1]).maybeSingle()
+          : { data: null };
+        if (Array.isArray(personal.data?.lyrics) && personal.data.lyrics.length) {
+          loadedLyrics = personal.data.lyrics as SyncedLyric[];
+          loadedOrigin = "personal";
+        } else {
+          const { data: community } = await supabase.from("lyric_edits")
+            .select("lyrics").eq("spotify_track_id", match[1]).eq("is_public", true)
+            .eq("moderation_status", "approved")
+            .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+          if (Array.isArray(community?.lyrics) && community.lyrics.length) {
+            loadedLyrics = validateSyncedLyrics(community.lyrics, data.trackDetails.track_duration_ms);
+            loadedOrigin = "community";
+          }
+        }
+      }
+      setOffset(offsets[match[1]] || 0);
       setTrackId(match[1]);
       setTrack(data.trackDetails);
-      const loadedLyrics = edits[match[1]] || data.syncedLyrics;
+      setSourceLyrics(originalLyrics);
+      setLyricsSource(data.lyricsSource);
+      setLyricsOrigin(loadedOrigin);
+      setSyncMessage("");
       if (!loadedLyrics?.length)
         throw new Error("Esta canción no tiene letras sincronizadas disponibles.");
       setLyrics(loadedLyrics);
@@ -807,25 +855,71 @@ export default function Home() {
   };
   const saveEdits = async () => {
     if (!trackId) return;
-    const all = JSON.parse(localStorage.getItem(LS.edits) || "{}");
-    all[trackId] = draftLyrics;
-    localStorage.setItem(LS.edits, JSON.stringify(all));
-    setLyrics(draftLyrics);
+    let validated: SyncedLyric[];
+    try {
+      validated = validateSyncedLyrics(draftLyrics, track?.track_duration_ms);
+    } catch (reason) {
+      setSyncMessage(reason instanceof Error ? reason.message : "La letra no es válida.");
+      return;
+    }
+    const all = readStoredJson<Record<string, SyncedLyric[]>>(LS.edits, {});
+    all[trackId] = validated;
+    writeStoredJson(LS.edits, all);
+    const originals = readStoredJson<Record<string, boolean>>(LS.originals, {});
+    delete originals[trackId];
+    writeStoredJson(LS.originals, originals);
+    setLyrics(validated);
+    setLyricsOrigin("personal");
     setEditorOpen(false);
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (user)
-      await supabase.from("lyric_edits").upsert(
-        {
-          user_id: user.id,
-          spotify_track_id: trackId,
-          lyrics: draftLyrics,
-          is_public: publicEdit,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,spotify_track_id" },
-      );
+    if (user) {
+      const { error: saveError } = await supabase.rpc("save_lyric_edit", {
+        target_track_id: trackId,
+        target_lyrics: validated,
+        request_public: publicEdit,
+        target_duration_ms: track?.track_duration_ms || null,
+      });
+      setSyncMessage(saveError ? saveError.message : publicEdit
+        ? "Guardamos tu corrección. Quedó pendiente de moderación."
+        : "Corrección personal guardada.");
+    }
+  };
+
+  const restoreOriginalLyrics = async () => {
+    if (!trackId || !sourceLyrics.length) return;
+    const all = readStoredJson<Record<string, SyncedLyric[]>>(LS.edits, {});
+    delete all[trackId];
+    writeStoredJson(LS.edits, all);
+    const originals = readStoredJson<Record<string, boolean>>(LS.originals, {});
+    originals[trackId] = true;
+    writeStoredJson(LS.originals, originals);
+    setLyrics(sourceLyrics);
+    setDraftLyrics(sourceLyrics);
+    setLyricsOrigin("LRCLIB");
+    setSyncMessage("Se restauró la sincronización original de LRCLIB.");
+    const { data } = await supabase.auth.getUser();
+    if (data.user)
+      await supabase.from("lyric_edits").delete().eq("user_id", data.user.id).eq("spotify_track_id", trackId);
+  };
+
+  const reportSynchronization = async () => {
+    if (!trackId) return;
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) {
+      setSyncMessage("Iniciá sesión para reportar una sincronización.");
+      return;
+    }
+    const { error: reportError } = await supabase.from("lyric_reports").upsert({
+      user_id: data.user.id,
+      spotify_track_id: trackId,
+      source_id: lyricsSource?.id || null,
+      observed_offset_ms: offset,
+      status: "open",
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id,spotify_track_id" });
+    setSyncMessage(reportError ? reportError.message : "Gracias. Guardamos el reporte para revisar esta canción.");
   };
   const changeDraft = (updater: (old: SyncedLyric[]) => SyncedLyric[]) => {
     undoRef.current.push(draftLyrics.map((line) => ({ ...line })));
@@ -985,9 +1079,11 @@ export default function Home() {
               className="flex max-w-[190px] items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm text-zinc-300 hover:bg-white/5"
             >
               {headerProfile?.avatar_url ? (
-                <img
+                <Image
                   src={headerProfile.avatar_url}
                   alt=""
+                  width={24}
+                  height={24}
                   className="h-6 w-6 rounded-full object-cover"
                 />
               ) : (
@@ -1071,9 +1167,11 @@ export default function Home() {
                 <aside className="space-y-4">
                   <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[.04] p-4">
                     {track.album_image && (
-                      <img
+                      <Image
                         src={track.album_image}
                         alt="Portada"
+                        width={320}
+                        height={320}
                         className="mb-4 aspect-square w-full rounded-xl object-cover"
                       />
                     )}
@@ -1369,10 +1467,31 @@ export default function Home() {
                     >
                       <RotateCcw size={14} /> Restablecer latencia
                     </button>
+                    <button
+                      onClick={() => void restoreOriginalLyrics()}
+                      disabled={lyricsOrigin === "LRCLIB"}
+                      className="flex items-center gap-1 rounded-full bg-white/5 px-3 py-2 text-zinc-300 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Undo2 size={14} /> Restaurar letra original
+                    </button>
+                    <button
+                      onClick={() => void reportSynchronization()}
+                      className="rounded-full bg-amber-400/10 px-3 py-2 text-amber-200"
+                    >
+                      Reportar desincronización
+                    </button>
+                    <span className="rounded-full bg-white/5 px-3 py-2 text-zinc-400">
+                      Fuente: {lyricsOrigin === "personal" ? "tu corrección" : lyricsOrigin === "community" ? "comunidad" : `LRCLIB${lyricsSource?.id ? ` #${lyricsSource.id}` : ""}`}
+                    </span>
                     <span className="rounded-full bg-white/5 px-3 py-2 text-zinc-500">
                       Esc pausa · Retroceso corrige
                     </span>
                   </div>
+                  {syncMessage && (
+                    <p className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300">
+                      {syncMessage}
+                    </p>
+                  )}
                   {calibrating && (
                     <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
                       <h3 className="font-bold">Calibración automática</h3>
@@ -1925,9 +2044,11 @@ function SongGrid({
             className="group flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[.04] p-3 text-left hover:border-violet-400/50"
           >
             {song.image ? (
-              <img
+              <Image
                 src={song.image}
                 alt=""
+                width={64}
+                height={64}
                 className="h-16 w-16 rounded-xl object-cover"
               />
             ) : (

@@ -3,7 +3,7 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Camera, Check, Crown, History, KeyRound, LogOut, Save, UserRound } from 'lucide-react';
+import { ArrowLeft, Camera, Check, Crown, Download, History, KeyRound, LogOut, Save, Trash2, UserRound } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 type Profile = { username: string; email: string; avatar_url: string | null; birth_date: string | null; gender: string | null; is_premium: boolean; premium_until: string | null };
@@ -111,13 +111,24 @@ export default function AccountPage() {
 
   const changePassword = async (event: FormEvent) => {
     event.preventDefault(); setError(''); setMessage('');
-    if (password.length < 6) { setError('La contraseña debe tener al menos 6 caracteres.'); return; }
+    if (password.length < 8) { setError('La contraseña debe tener al menos 8 caracteres.'); return; }
     if (password !== passwordAgain) { setError('Las contraseñas no coinciden.'); return; }
     const { error: passwordError } = await supabase.auth.updateUser({ password });
     if (passwordError) setError(passwordError.message); else { setPassword(''); setPasswordAgain(''); setMessage('Contraseña actualizada.'); }
   };
 
   const logout = async () => { await supabase.auth.signOut(); router.push('/'); router.refresh(); };
+  const exportAccount = () => {
+    const payload = JSON.stringify({ exported_at: new Date().toISOString(), profile, games }, null, 2);
+    const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'typethelyrics-datos.json'; anchor.click(); URL.revokeObjectURL(url);
+  };
+  const deleteAccount = async () => {
+    if (!confirm('¿Eliminar definitivamente tu cuenta, historial, favoritos y correcciones? Esta acción no se puede deshacer.')) return;
+    const confirmation = prompt('Escribí ELIMINAR para confirmar.'); if (confirmation !== 'ELIMINAR') return;
+    setError(''); const { error: deleteError } = await supabase.rpc('delete_my_account');
+    if (deleteError) setError(deleteError.message); else { await supabase.auth.signOut(); router.replace('/'); router.refresh(); }
+  };
 
   if (loading) return <main className="grid min-h-screen place-items-center bg-[#07080d] text-zinc-400">Cargando tu cuenta…</main>;
   if (!profile) return <main className="grid min-h-screen place-items-center bg-[#07080d] p-4 text-white"><div><p>{error || 'No pudimos cargar tu perfil.'}</p><Link href="/" className="mt-4 inline-block text-violet-300">Volver al inicio</Link></div></main>;
@@ -133,6 +144,7 @@ export default function AccountPage() {
         <form onSubmit={changePassword} className="rounded-3xl border border-white/10 bg-white/[.04] p-6"><h2 className="flex items-center gap-2 text-xl font-bold"><KeyRound className="text-cyan-300"/> Seguridad</h2><p className="mt-2 text-sm text-zinc-500">Elegí una nueva contraseña para tu cuenta.</p><div className="mt-5 space-y-4"><label className="block text-sm text-zinc-400">Nueva contraseña<input type="password" value={password} onChange={e=>setPassword(e.target.value)} minLength={6} autoComplete="new-password" className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/30 px-4 text-white outline-none focus:border-cyan-400"/></label><label className="block text-sm text-zinc-400">Repetir contraseña<input type="password" value={passwordAgain} onChange={e=>setPasswordAgain(e.target.value)} minLength={6} autoComplete="new-password" className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/30 px-4 text-white outline-none focus:border-cyan-400"/></label></div><button className="mt-6 w-full rounded-xl border border-cyan-400/30 bg-cyan-400/10 py-3 font-bold text-cyan-200">Cambiar contraseña</button></form>
       </div>
       <section className="mt-6 rounded-3xl border border-white/10 bg-white/[.04] p-6"><div className="flex items-center justify-between"><div><h2 className="flex items-center gap-2 text-xl font-bold"><History className="text-fuchsia-300"/> Historial de canciones</h2><p className="mt-1 text-sm text-zinc-500">Tu puntuación máxima en cada canción.</p></div><span className="rounded-full bg-white/5 px-3 py-1 text-xs text-zinc-400">{games.length} partidas</span></div><div className="mt-5 space-y-2">{bestSongs.length?bestSongs.map(song=><Link href={`/?track=${song.spotify_track_id}`} key={song.spotify_track_id} className="grid grid-cols-[48px_1fr_auto] items-center gap-3 rounded-2xl border border-white/5 bg-black/20 p-3 hover:border-violet-400/30">{song.image_url?<img src={song.image_url} alt="" className="h-12 w-12 rounded-xl object-cover"/>:<div className="grid h-12 w-12 place-items-center rounded-xl bg-violet-500/10 text-violet-300">♪</div>}<div className="min-w-0"><b className="block truncate">{song.track_title || 'Canción de Spotify'}</b><span className="block truncate text-sm text-zinc-500">{song.track_artist || `${song.attempts} intento${song.attempts===1?'':'s'}`}</span></div><div className="text-right"><b className="block text-lg text-violet-300">{song.score.toLocaleString()}</b><span className="text-xs text-zinc-500">máxima · {song.rank}</span></div></Link>):<div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-zinc-500">Terminá una canción con la sesión iniciada y aparecerá acá.</div>}</div></section>
+      <section className="mt-6 rounded-3xl border border-white/10 bg-white/[.04] p-6"><h2 className="text-xl font-bold">Tus datos</h2><p className="mt-2 text-sm text-zinc-500">Descargá una copia o eliminá definitivamente tu cuenta.</p><div className="mt-5 flex flex-wrap gap-3"><button onClick={exportAccount} className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-3"><Download size={17}/> Exportar datos</button><button onClick={deleteAccount} className="flex items-center gap-2 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-red-200"><Trash2 size={17}/> Eliminar cuenta</button></div></section>
     </div>
   </main>;
 }
