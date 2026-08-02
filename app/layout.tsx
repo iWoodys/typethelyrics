@@ -17,6 +17,14 @@ export const metadata: Metadata = {
   title: "TypeTheLyrics - Escribí al ritmo de tu música",
   description: "Juego de mecanografía musical con letras sincronizadas, modos de juego, puntuación y progreso.",
   applicationName: "TypeTheLyrics",
+  icons: {
+    icon: [
+      { url: "/favicon.ico?v=2", sizes: "64x64", type: "image/x-icon" },
+      { url: "/icon.png?v=2", type: "image/png" },
+    ],
+    shortcut: "/favicon.ico?v=2",
+    apple: "/icon.png?v=2",
+  },
   authors: [{ name: "Arjun Vijay Prakash" }],
   generator: "Next.js",
   keywords: ["typing", "lyrics", "music", "spotify", "typing practice", "typing game"],
