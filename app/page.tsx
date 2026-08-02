@@ -139,6 +139,7 @@ const LS = {
   guide: "ttl-guide-seen-v1",
   announcements: "ttl-announcements-seen-v1",
   calibrationReload: "ttl-calibration-reload-v1",
+  spotifyNotice: "ttl-spotify-notice-seen-v1",
 };
 const GUIDE_STEPS = [
   { title: "1. Elegí una canción", text: "Buscala por nombre o pegá un enlace de una canción de Spotify. Para playlists, conectá Spotify: desde 2026 sólo se permiten playlists propias o colaborativas." },
@@ -208,6 +209,7 @@ export default function Home() {
   );
   const [isAdmin, setIsAdmin] = useState(false);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
+  const [spotifyNoticeOpen, setSpotifyNoticeOpen] = useState(false);
   const undoRef = useRef<SyncedLyric[][]>([]);
   const redoRef = useRef<SyncedLyric[][]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -698,12 +700,24 @@ export default function Home() {
     },
     [mode, timedIndex],
   );
-  const startGame = () => {
+  const beginGame = () => {
     resetGame();
     setStarted(true);
     setStartedAt(Date.now());
     setTimeout(() => inputRef.current?.focus(), 50);
     sendPlayer("play");
+  };
+  const startGame = () => {
+    if (!localStorage.getItem(LS.spotifyNotice)) {
+      setSpotifyNoticeOpen(true);
+      return;
+    }
+    beginGame();
+  };
+  const acceptSpotifyNotice = () => {
+    localStorage.setItem(LS.spotifyNotice, "1");
+    setSpotifyNoticeOpen(false);
+    beginGame();
   };
 
   const handleTyping = (value: string) => {
@@ -2014,6 +2028,21 @@ export default function Home() {
       )}
 
       <GameModesModal open={modesOpen} onClose={() => setModesOpen(false)} />
+      {spotifyNoticeOpen && (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-black/85 p-4 backdrop-blur-md">
+          <div role="dialog" aria-modal="true" aria-labelledby="spotify-notice-title" className="w-full max-w-lg rounded-3xl border border-emerald-400/25 bg-[#11131a] p-7 shadow-2xl shadow-emerald-950/40">
+            <div className="flex items-start justify-between gap-4">
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-400/15 text-emerald-300"><Music2/></div>
+              <button aria-label="Cerrar aviso" onClick={() => setSpotifyNoticeOpen(false)} className="rounded-full p-1 text-zinc-400 hover:bg-white/10"><X/></button>
+            </div>
+            <h2 id="spotify-notice-title" className="mt-6 text-3xl font-black">Antes de comenzar</h2>
+            <p className="mt-4 leading-relaxed text-zinc-300">Para escuchar la canción completa, iniciá sesión en Spotify desde este mismo navegador. Sin una sesión activa, Spotify puede reproducir solamente una vista previa de 30 segundos y la partida quedará incompleta.</p>
+            <a href="https://open.spotify.com/" target="_blank" rel="noopener noreferrer" className="mt-6 block w-full rounded-xl border border-emerald-400/30 bg-emerald-400/10 py-3 text-center font-bold text-emerald-200">Abrir Spotify e iniciar sesión</a>
+            <button onClick={acceptSpotifyNotice} className="mt-3 w-full rounded-xl bg-emerald-400 py-3 font-black text-emerald-950">Ya inicié sesión · comenzar</button>
+            <p className="mt-4 text-center text-xs text-zinc-500">Este aviso se mostrará solamente esta vez.</p>
+          </div>
+        </div>
+      )}
       {announcement && (
         <div className="fixed inset-0 z-[70] grid place-items-center bg-black/85 p-4 backdrop-blur-md">
           <div role="dialog" aria-modal="true" aria-labelledby="announcement-title" className="w-full max-w-xl overflow-hidden rounded-3xl border border-violet-400/25 bg-[#11131a] shadow-2xl shadow-violet-950/50">
