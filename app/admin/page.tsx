@@ -9,6 +9,11 @@ type Edit = { id: string; spotify_track_id: string; lyrics: unknown[]; users: { 
 type Report = { id: string; spotify_track_id: string; observed_offset_ms: number; status: string };
 type Announcement = { id: string; title: string; body: string; created_at: string };
 
+const announcementError = (message: string) =>
+  message.includes("publish_announcement") || message.includes("schema cache")
+    ? "Falta instalar el sistema de anuncios en Supabase. Ejecutá migrations/008_admin_announcements.sql en el SQL Editor."
+    : message;
+
 export default function AdminPage() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [edits, setEdits] = useState<Edit[]>([]);
@@ -44,7 +49,7 @@ export default function AdminPage() {
     setPublishing(true); setMessage("");
     const { error } = await supabase.rpc("publish_announcement", { announcement_title: title, announcement_body: body });
     setPublishing(false);
-    if (error) { setMessage(error.message); return; }
+    if (error) { setMessage(announcementError(error.message)); return; }
     setTitle(""); setBody(""); setMessage("Anuncio publicado. Aparecerá una vez en el inicio de cada jugador.");
     await load();
   };

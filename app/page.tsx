@@ -138,12 +138,13 @@ const LS = {
   settings: "ttl-settings-v2",
   guide: "ttl-guide-seen-v1",
   announcements: "ttl-announcements-seen-v1",
+  calibrationReload: "ttl-calibration-reload-v1",
 };
 const GUIDE_STEPS = [
   { title: "1. Elegí una canción", text: "Buscala por nombre o pegá un enlace de una canción de Spotify. Para playlists, conectá Spotify: desde 2026 sólo se permiten playlists propias o colaborativas." },
   { title: "2. Iniciá la reproducción", text: "Pulsá Play dentro de Spotify y después Iniciar partida. Si la canción tiene una introducción larga, la escritura permanecerá bloqueada hasta que realmente empiece la primera voz." },
   { title: "3. Escribí cuando se ilumine", text: "Cuando aparezca «Escribí ahora», usá el teclado directamente. Entre versos el juego espera; si Spotify está pausado, la pantalla te lo indicará." },
-  { title: "4. Calibrá sólo si hace falta", text: "Pulsá «Calibrar canción» y marcá el comienzo de tres versos al escucharlos. El ajuste se guarda para esa canción y la partida vuelve al principio automáticamente." },
+  { title: "4. Calibrá sólo si hace falta", text: "Pulsá «Calibrar canción» para descartar ajustes locales, aplicar automáticamente la sincronización completa más reciente y volver a abrir la canción." },
 ];
 
 export default function Home() {
@@ -196,8 +197,6 @@ export default function Home() {
   const [fontScale, setFontScale] = useState(1);
   const [highContrast, setHighContrast] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
-  const [calibrating, setCalibrating] = useState(false);
-  const [calibrationSamples, setCalibrationSamples] = useState<number[]>([]);
   const [publicEdit, setPublicEdit] = useState(false);
   const [playlistUrl, setPlaylistUrl] = useState("");
   const [playlistTracks, setPlaylistTracks] = useState<SongCard[]>([]);
@@ -241,6 +240,13 @@ export default function Home() {
     setHighContrast(saved.highContrast);
     setReducedMotion(saved.reducedMotion);
     if (!localStorage.getItem(LS.guide)) setGuideOpen(true);
+    const calibrationReload = sessionStorage.getItem(LS.calibrationReload);
+    if (calibrationReload) {
+      sessionStorage.removeItem(LS.calibrationReload);
+      void loadSong(calibrationReload, true);
+    }
+    // Esta recuperación sólo debe ejecutarse una vez después de recargar la página.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     const loadAnnouncement = async () => {
@@ -773,7 +779,7 @@ export default function Home() {
     }
   };
 
-  const loadSong = async (songUrl = url) => {
+  async function loadSong(songUrl = url, automaticCalibration = false) {
     const match = songUrl.match(
       /(?:spotify:track:|spotify\.com\/(?:intl-[a-z]{2}(?:-[a-z]{2})?\/)?track\/)([a-zA-Z0-9]+)(?:[/?#]|$)/i,
     );
@@ -803,12 +809,12 @@ export default function Home() {
       const originalLyrics = validateSyncedLyrics(data.syncedLyrics, data.trackDetails.track_duration_ms);
       let loadedLyrics = originalLyrics;
       let loadedOrigin: "LRCLIB" | "personal" | "community" = "LRCLIB";
-      if (!originals[match[1]] && edits[match[1]]?.length) {
+      if (!automaticCalibration && !originals[match[1]] && edits[match[1]]?.length) {
         loadedLyrics = edits[match[1]];
         loadedOrigin = "personal";
       } else if (!originals[match[1]]) {
         const { data: authData } = await supabase.auth.getUser();
-        const personal = authData.user
+        const personal = authData.user && !automaticCalibration
           ? await supabase.from("lyric_edits").select("lyrics").eq("user_id", authData.user.id).eq("spotify_track_id", match[1]).maybeSingle()
           : { data: null };
         if (Array.isArray(personal.data?.lyrics) && personal.data.lyrics.length) {
@@ -831,7 +837,9 @@ export default function Home() {
       setSourceLyrics(originalLyrics);
       setLyricsSource(data.lyricsSource);
       setLyricsOrigin(loadedOrigin);
-      setSyncMessage("");
+      setSyncMessage(automaticCalibration
+        ? `Sincronización completa aplicada automáticamente (${loadedOrigin === "community" ? "corregida por administración" : "fuente LRCLIB"}).`
+        : "");
       if (!loadedLyrics?.length)
         throw new Error("Esta canción no tiene letras sincronizadas disponibles.");
       setLyrics(loadedLyrics);
@@ -847,7 +855,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   useEffect(() => {
     const requestedTrack = new URLSearchParams(window.location.search).get("track");
@@ -993,38 +1001,23 @@ export default function Home() {
     undoRef.current.push(draftLyrics);
     setDraftLyrics(next);
   };
-  const markCalibration = () => {
-    if (!lyrics.length) return;
-    const nearest = lyrics.reduce((best, line) =>
-      Math.abs(line.startTimeMs - position) <
-      Math.abs(best.startTimeMs - position)
-        ? line
-        : best,
-    );
-    const sample = nearest.startTimeMs - position;
-    const samples = [...calibrationSamples, sample].slice(-5);
-    setCalibrationSamples(samples);
-    if (samples.length >= 3) {
-      const calibratedOffset = Math.round(samples.reduce((sum, value) => sum + value, 0) / samples.length / 50) * 50;
-      setOffset(calibratedOffset);
-      if (trackId) {
-        const offsets = readStoredJson<Record<string, number>>(LS.offsets, {});
-        offsets[trackId] = calibratedOffset;
-        writeStoredJson(LS.offsets, offsets);
-      }
-      setCalibrating(false);
-      setCalibrationSamples([]);
-      setSyncMessage("Calibración guardada. Reiniciamos la canción para aplicar el ajuste.");
-      resetGame(mode, 0);
-      setPosition(0);
-      sendPlayer("restart");
-    }
+  const applyAutomaticCalibration = () => {
+    if (!trackId) return;
+    const edits = readStoredJson<Record<string, SyncedLyric[]>>(LS.edits, {});
+    const originals = readStoredJson<Record<string, boolean>>(LS.originals, {});
+    const offsets = readStoredJson<Record<string, number>>(LS.offsets, {});
+    delete edits[trackId];
+    delete originals[trackId];
+    delete offsets[trackId];
+    writeStoredJson(LS.edits, edits);
+    writeStoredJson(LS.originals, originals);
+    writeStoredJson(LS.offsets, offsets);
+    sessionStorage.setItem(LS.calibrationReload, `https://open.spotify.com/track/${trackId}`);
+    window.location.reload();
   };
 
   const resetLatency = () => {
     setOffset(0);
-    setCalibrating(false);
-    setCalibrationSamples([]);
   };
   const importPlaylist = async (event: FormEvent) => {
     event.preventDefault();
@@ -1385,13 +1378,11 @@ export default function Home() {
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
-                          setCalibrationSamples([]);
-                          setCalibrating(true);
-                          sendPlayer("play");
+                          applyAutomaticCalibration();
                         }}
                         className="flex items-center gap-2 rounded-lg bg-cyan-400/15 px-3 py-2 text-xs font-bold text-cyan-200"
                       >
-                        <Gauge size={14} /> {calibrating ? "Calibrando…" : "Calibrar canción"}
+                        <Gauge size={14} /> Calibrar canción
                       </button>
                     </div>
                     <div className="mt-12 text-center">
@@ -1531,7 +1522,7 @@ export default function Home() {
                     </button>
                     <button
                       onClick={resetLatency}
-                      disabled={offset === 0 && !calibrating}
+                      disabled={offset === 0}
                       className="flex items-center gap-1 rounded-full bg-white/5 px-3 py-2 text-zinc-300 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <RotateCcw size={14} /> Borrar calibración
@@ -1560,25 +1551,6 @@ export default function Home() {
                     <p className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300">
                       {syncMessage}
                     </p>
-                  )}
-                  {calibrating && (
-                    <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
-                      <h3 className="font-bold">Calibración automática</h3>
-                      <p className="my-2 text-sm text-zinc-400">
-                        Reproducí la canción y marcá justo cuando escuches comenzar
-                        tres versos. Al terminar se guardará el ajuste y la canción
-                        volverá al principio automáticamente.
-                      </p>
-                      <button
-                        onClick={markCalibration}
-                        className="rounded-xl bg-cyan-300 px-5 py-3 font-bold text-black"
-                      >
-                        Marcar canto ahora
-                      </button>
-                      <span className="ml-3 text-sm text-cyan-200">
-                        {calibrationSamples.length}/3 marcas
-                      </span>
-                    </div>
                   )}
                 </div>
               </section>
