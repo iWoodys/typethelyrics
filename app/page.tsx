@@ -114,6 +114,11 @@ type HeaderProfile = {
   is_premium: boolean;
   premium_until: string | null;
 };
+type Announcement = {
+  id: string;
+  title: string;
+  body: string;
+};
 
 const EMPTY_STATS: Stats = {
   games: 0,
@@ -132,6 +137,7 @@ const LS = {
   originals: "ttl-original-lyrics-v1",
   settings: "ttl-settings-v2",
   guide: "ttl-guide-seen-v1",
+  announcements: "ttl-announcements-seen-v1",
 };
 const GUIDE_STEPS = [
   { title: "1. Elegí una canción", text: "Buscala por nombre o pegá un enlace de una canción de Spotify. Para playlists, conectá Spotify: desde 2026 sólo se permiten playlists propias o colaborativas." },
@@ -202,6 +208,7 @@ export default function Home() {
     null,
   );
   const [isAdmin, setIsAdmin] = useState(false);
+  const [announcement, setAnnouncement] = useState<Announcement | null>(null);
   const undoRef = useRef<SyncedLyric[][]>([]);
   const redoRef = useRef<SyncedLyric[][]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -235,6 +242,28 @@ export default function Home() {
     setReducedMotion(saved.reducedMotion);
     if (!localStorage.getItem(LS.guide)) setGuideOpen(true);
   }, []);
+  useEffect(() => {
+    const loadAnnouncement = async () => {
+      const { data } = await supabase
+        .from("announcements")
+        .select("id,title,body")
+        .eq("is_active", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!data) return;
+      const seen = readStoredJson<string[]>(LS.announcements, []);
+      if (!seen.includes(data.id)) setAnnouncement(data as Announcement);
+    };
+    void loadAnnouncement();
+  }, []);
+
+  const dismissAnnouncement = () => {
+    if (!announcement) return;
+    const seen = readStoredJson<string[]>(LS.announcements, []);
+    writeStoredJson(LS.announcements, [...new Set([...seen, announcement.id])].slice(-50));
+    setAnnouncement(null);
+  };
   useEffect(() => {
     const loadProfile = async (user: User | null) => {
       setAuthUser(user);
@@ -1352,7 +1381,7 @@ export default function Home() {
                           : "✕ Frase incompleta"}
                       </div>
                     )}
-                    <div className="absolute right-4 top-4">
+                    <div className="absolute right-4 top-4 z-10">
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
@@ -1442,7 +1471,7 @@ export default function Home() {
                         if (e.key === "Escape") sendPlayer("pause");
                       }}
                       disabled={!canType}
-                      className="absolute inset-0 opacity-0"
+                      className="pointer-events-none absolute inset-0 opacity-0"
                       autoComplete="off"
                       spellCheck={false}
                     />
@@ -2013,6 +2042,23 @@ export default function Home() {
       )}
 
       <GameModesModal open={modesOpen} onClose={() => setModesOpen(false)} />
+      {announcement && (
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-black/85 p-4 backdrop-blur-md">
+          <div role="dialog" aria-modal="true" aria-labelledby="announcement-title" className="w-full max-w-xl overflow-hidden rounded-3xl border border-violet-400/25 bg-[#11131a] shadow-2xl shadow-violet-950/50">
+            <div className="bg-gradient-to-r from-violet-600/30 to-cyan-500/20 p-7">
+              <div className="flex items-center justify-between gap-4">
+                <span className="flex items-center gap-2 text-xs font-black uppercase tracking-[.25em] text-violet-200"><Sparkles size={16}/> Novedades</span>
+                <button aria-label="Cerrar anuncio" onClick={dismissAnnouncement} className="rounded-full p-1 text-zinc-300 hover:bg-white/10"><X/></button>
+              </div>
+              <h2 id="announcement-title" className="mt-6 text-3xl font-black">{announcement.title}</h2>
+            </div>
+            <div className="p-7">
+              <p className="whitespace-pre-wrap leading-relaxed text-zinc-300">{announcement.body}</p>
+              <button onClick={dismissAnnouncement} className="mt-7 w-full rounded-xl bg-gradient-to-r from-violet-500 to-cyan-400 py-3 font-black text-white">¡Entendido!</button>
+            </div>
+          </div>
+        </div>
+      )}
       {guideOpen && (
         <div className="fixed inset-0 z-[60] grid place-items-center bg-black/80 p-4 backdrop-blur-md">
           <div role="dialog" aria-modal="true" aria-labelledby="guide-title" className="w-full max-w-lg rounded-3xl border border-emerald-400/20 bg-[#11131a] p-7 shadow-2xl">
