@@ -4,7 +4,7 @@ Juego de mecanografía musical con canciones de Spotify, letras sincronizadas de
 
 ## Desarrollo local
 
-Requiere Node.js 20 o superior.
+Requiere Node.js 22 LTS.
 
 ```bash
 npm install
