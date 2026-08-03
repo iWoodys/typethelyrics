@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(join(process.cwd(), "migrations", "009_audit_hardening.sql"), "utf8");
+const lobbyMigration = readFileSync(join(process.cwd(), "migrations", "010_lobby_reliability.sql"), "utf8");
 
 describe("database hardening migration", () => {
   it("removes the historical result function and direct profile creation", () => {
@@ -22,3 +23,18 @@ describe("database hardening migration", () => {
   });
 });
 
+describe("lobby reliability migration", () => {
+  it("locks the lobby before checking its exact capacity", () => {
+    expect(lobbyMigration).toContain("status='waiting' for update");
+    expect(lobbyMigration).toContain("if current_players >= 8");
+  });
+  it("validates song data inside the trusted RPC", () => {
+    expect(lobbyMigration).toContain("jsonb_array_length(new_lyrics) not between 1 and 2000");
+    expect(lobbyMigration).toContain("pg_column_size(new_lyrics) > 1048576");
+  });
+  it("supports presence, leaving and audited premium changes", () => {
+    expect(lobbyMigration).toContain("function public.heartbeat_lobby");
+    expect(lobbyMigration).toContain("function public.leave_lobby");
+    expect(lobbyMigration).toContain("premium_audit_log");
+  });
+});

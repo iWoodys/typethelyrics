@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { checkSpotifyUrl, getLyrics } from '@/lib/spotify';
 import { rateLimit } from '@/lib/rate-limit';
 import { validateSyncedLyrics } from '@/lib/lyrics';
+import { readJsonBody } from '@/lib/request';
 
 export async function POST(request: Request) {
   const retryAfter = rateLimit(request, 'lyrics', 15);
@@ -10,8 +11,8 @@ export async function POST(request: Request) {
     { status: 429, headers: { 'Retry-After': String(retryAfter) } },
   );
   try {
-    const data = await request.json();
-    const { url } = data;
+    const data = await readJsonBody<{ url?: unknown }>(request, 2048);
+    const url = typeof data.url === 'string' ? data.url : '';
 
     if (!url) {
       return NextResponse.json({ error: 'No URL provided' }, { status: 400 });
@@ -54,6 +55,9 @@ export async function POST(request: Request) {
       lyricsSource: regularLyrics.lyricsSource,
     });
   } catch (error) {
+    if (error instanceof Error && (error.message === 'BODY_TOO_LARGE' || error.message === 'INVALID_JSON')) {
+      return NextResponse.json({ error: 'Solicitud inválida.' }, { status: 400 });
+    }
     console.error('Error getting lyrics:', error);
     return NextResponse.json(
       { error: 'Failed to get lyrics' },

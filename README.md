@@ -30,8 +30,9 @@ Para una instalación nueva, ejecutá `supabase-schema.sql` y luego las migracio
 2. `migrations/007_final_score_validation.sql`
 3. `migrations/008_admin_announcements.sql`
 4. `migrations/009_audit_hardening.sql`
+5. `migrations/010_lobby_reliability.sql`
 
-La migración 009 es obligatoria: elimina una firma histórica insegura, protege perfiles e historial, y publica únicamente rankings anonimizados mediante RPC.
+Las migraciones 009 y 010 son obligatorias. La 010 valida las partidas en el servidor, evita sobrecupos, agrega presencia/salida de salas y registra los cambios Premium del administrador.
 
 ## Spotify
 
@@ -47,12 +48,15 @@ La conexión de Spotify solo se usa para importar playlists propias o colaborati
 ```bash
 npm test -- --run
 npm run lint
+npm run typecheck
 npm run build
 ```
 
 ## Despliegue
 
-El repositorio incluye `render.yaml`. Configurá las cuatro variables de entorno en Render, aplicá las migraciones en Supabase y verificá `/api/health` después del despliegue. Nunca copies secretos dentro del repositorio.
+El repositorio incluye `render.yaml`. Configurá las cuatro variables de entorno en Render, aplicá las migraciones en Supabase y verificá `/api/health` y `/api/ready` después del despliegue. UptimeRobot debe vigilar `/api/ready`, que comprueba también la base de datos. Nunca copies secretos dentro del repositorio.
+
+GitHub Actions ejecuta pruebas, lint, tipos y build en cada push. El workflow de backup requiere crear el secret de repositorio `SUPABASE_DB_URL` con la cadena de conexión PostgreSQL de Supabase; guarda copias privadas durante 14 días. Ejecutalo manualmente una vez para comprobar la restauración antes de confiar en la programación diaria.
 
 ## Servicios y atribución
 

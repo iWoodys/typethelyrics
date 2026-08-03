@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Check, Megaphone, Send, Shield, X } from "lucide-react";
+import { Check, Crown, Megaphone, Send, Shield, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 type Edit = { id: string; user_id: string; spotify_track_id: string; lyrics: unknown[]; users: { username: string } | null };
 type Report = { id: string; spotify_track_id: string; observed_offset_ms: number; status: string };
 type Announcement = { id: string; title: string; body: string; created_at: string };
+type PremiumAudit = { id: string; target_email: string; new_premium: boolean; new_until: string | null; reason: string; created_at: string };
 
 const announcementError = (message: string) =>
   message.includes("publish_announcement") || message.includes("schema cache")
@@ -23,6 +24,11 @@ export default function AdminPage() {
   const [body, setBody] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [message, setMessage] = useState("");
+  const [premiumEmail, setPremiumEmail] = useState("");
+  const [premiumDays, setPremiumDays] = useState("");
+  const [premiumReason, setPremiumReason] = useState("");
+  const [premiumAudit, setPremiumAudit] = useState<PremiumAudit[]>([]);
+  const [savingPremium, setSavingPremium] = useState(false);
 
   const load = useCallback(async () => {
     const { data: userData } = await supabase.auth.getUser();
@@ -32,10 +38,11 @@ export default function AdminPage() {
       setAllowed(false); setEdits([]); setReports([]); return;
     }
     setAllowed(true);
-    const [a, b, c] = await Promise.all([
+    const [a, b, c, d] = await Promise.all([
       supabase.from("lyric_edits").select("id,user_id,spotify_track_id,lyrics").eq("moderation_status", "pending").order("updated_at"),
       supabase.from("lyric_reports").select("id,spotify_track_id,observed_offset_ms,status").neq("status", "resolved").order("updated_at"),
       supabase.from("announcements").select("id,title,body,created_at").eq("is_active", true).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("premium_audit_log").select("id,target_email,new_premium,new_until,reason,created_at").order("created_at", { ascending: false }).limit(20),
     ]);
     if (a.error || b.error || c.error) setMessage(a.error?.message || b.error?.message || c.error?.message || "No se pudo cargar el panel.");
     const editRows = (a.data || []) as Omit<Edit, "users">[];
@@ -47,6 +54,7 @@ export default function AdminPage() {
     setEdits(editRows.map((row) => ({ ...row, users: { username: names.get(row.user_id) || "Jugador" } })));
     setReports((b.data || []) as Report[]);
     setAnnouncement((c.data as Announcement | null) || null);
+    if (!d.error) setPremiumAudit((d.data || []) as PremiumAudit[]);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -75,6 +83,19 @@ export default function AdminPage() {
     setMessage(error?.message || "Reporte resuelto.");
     await load();
   };
+  const changePremium = async (event: FormEvent) => {
+    event.preventDefault();
+    setSavingPremium(true); setMessage("");
+    const parsedDays = premiumDays.trim() === "" ? null : Number(premiumDays);
+    const { error } = await supabase.rpc("set_user_premium", {
+      target_email: premiumEmail.trim(), premium_days: parsedDays, change_reason: premiumReason.trim(),
+    });
+    setSavingPremium(false);
+    if (error) { setMessage(error.message.includes("set_user_premium") ? "Ejecutá migrations/010_lobby_reliability.sql en Supabase." : error.message); return; }
+    setMessage(parsedDays === 0 ? "Premium retirado correctamente." : "Premium actualizado correctamente.");
+    setPremiumEmail(""); setPremiumDays(""); setPremiumReason("");
+    await load();
+  };
 
   if (allowed === null) return <main className="grid min-h-screen place-items-center bg-[#07080d] text-zinc-400">Comprobando permisos…</main>;
   if (!allowed) return <main className="grid min-h-screen place-items-center bg-[#07080d] text-white"><div className="text-center"><Shield className="mx-auto mb-4 text-red-300"/><h1 className="text-2xl font-black">Acceso restringido</h1><Link href="/" className="mt-5 inline-block text-violet-300">Volver al juego</Link></div></main>;
@@ -93,6 +114,18 @@ export default function AdminPage() {
         <label className="block text-sm text-zinc-300">Mensaje<textarea value={body} onChange={(e) => setBody(e.target.value)} maxLength={2000} required rows={6} placeholder={"¡Tenemos novedades!\n\n• Mejoramos la sincronización.\n• Agregamos nuevos modos de juego."} className="mt-2 w-full resize-y rounded-xl border border-white/10 bg-black/25 p-4 outline-none focus:border-violet-400"/><span className="mt-1 block text-right text-xs text-zinc-500">{body.length}/2000</span></label>
         <button disabled={publishing} className="flex items-center gap-2 rounded-xl bg-violet-500 px-5 py-3 font-bold disabled:opacity-50"><Send size={17}/>{publishing ? "Publicando…" : "Publicar anuncio"}</button>
       </form>
+    </section>
+
+    <section className="mt-8 rounded-3xl border border-amber-300/20 bg-amber-300/[.06] p-6">
+      <h2 className="flex items-center gap-2 text-xl font-bold"><Crown className="text-amber-300"/> Administrar Premium</h2>
+      <p className="mt-2 text-sm text-zinc-400">Dejá los días vacíos para Premium permanente, usá 31 para un mes o 0 para retirarlo. Cada cambio queda auditado.</p>
+      <form onSubmit={changePremium} className="mt-5 grid gap-3 md:grid-cols-2">
+        <label className="text-sm text-zinc-300">Correo del jugador<input type="email" required value={premiumEmail} onChange={(event) => setPremiumEmail(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4"/></label>
+        <label className="text-sm text-zinc-300">Días<input type="number" min="0" max="3650" value={premiumDays} onChange={(event) => setPremiumDays(event.target.value)} placeholder="Vacío = permanente" className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4"/></label>
+        <label className="text-sm text-zinc-300 md:col-span-2">Motivo<input value={premiumReason} maxLength={300} onChange={(event) => setPremiumReason(event.target.value)} placeholder="Compra, premio, prueba…" className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4"/></label>
+        <button disabled={savingPremium} className="flex w-fit items-center gap-2 rounded-xl bg-amber-300 px-5 py-3 font-bold text-black disabled:opacity-50"><Crown size={17}/>{savingPremium ? "Guardando…" : "Aplicar cambio"}</button>
+      </form>
+      {premiumAudit.length > 0 && <div className="mt-6 overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-zinc-500"><tr><th className="py-2">Cuenta</th><th>Estado</th><th>Motivo</th><th>Fecha</th></tr></thead><tbody>{premiumAudit.map((entry) => <tr key={entry.id} className="border-t border-white/5"><td className="py-3 pr-4">{entry.target_email}</td><td className="pr-4">{entry.new_premium ? (entry.new_until ? `Hasta ${new Date(entry.new_until).toLocaleDateString("es-AR")}` : "Permanente") : "Retirado"}</td><td className="pr-4 text-zinc-400">{entry.reason || "Sin motivo"}</td><td className="text-zinc-500">{new Date(entry.created_at).toLocaleString("es-AR")}</td></tr>)}</tbody></table></div>}
     </section>
 
     <h2 className="mt-8 text-xl font-bold">Correcciones pendientes ({edits.length})</h2>

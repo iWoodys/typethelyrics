@@ -1,0 +1,26 @@
+name: Backup de Supabase
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Comprobar configuración
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: test -n "$SUPABASE_DB_URL" || (echo "Falta el secret SUPABASE_DB_URL" && exit 1)
+      - name: Instalar cliente PostgreSQL
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Crear backup cifrado por GitHub
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: pg_dump "$SUPABASE_DB_URL" --format=custom --no-owner --file=typethelyrics.dump
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supabase-${{ github.run_id }}
+          path: typethelyrics.dump
+          retention-days: 14
+          if-no-files-found: error

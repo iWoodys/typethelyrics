@@ -1721,12 +1721,10 @@ export default function Home() {
                 </div>
               </div>
             )}
-            <Link
-              href="/privacy"
-              className="mt-8 inline-block text-sm text-zinc-500 underline"
-            >
-              Privacidad y atribuciones
-            </Link>
+            <div className="mt-8 flex justify-center gap-5 text-sm text-zinc-500 underline">
+              <Link href="/privacy">Privacidad y atribuciones</Link>
+              <Link href="/terms">Términos de uso</Link>
+            </div>
           </section>
         )}
       </div>

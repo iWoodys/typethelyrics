@@ -16,6 +16,7 @@ import {
   Gamepad2,
   Heart,
   LogIn,
+  LogOut,
   Music2,
   Play,
   Radio,
@@ -248,6 +249,8 @@ export default function MultiplayerPage() {
 
       if (!active) return;
       setProfile(userProfile as Profile | null);
+      // Mantiene la lista de salas limpia sin depender de un servicio pago.
+      void supabase.rpc("cleanup_abandoned_lobbies");
 
       const roomCode = new URLSearchParams(window.location.search).get("room");
       if (roomCode) {
@@ -282,8 +285,8 @@ export default function MultiplayerPage() {
   }, [loadRoom]);
 
   useEffect(() => {
-    if (!lobby) return;
-    const roomId = lobby.id;
+    const roomId = lobby?.id;
+    if (!roomId) return;
     const channel = supabase
       .channel(`lobby-${roomId}`)
       .on(
@@ -294,7 +297,10 @@ export default function MultiplayerPage() {
           table: "lobbies",
           filter: `id=eq.${roomId}`,
         },
-        () => void loadRoom(roomId),
+        (payload) => {
+          if (payload.eventType === "DELETE") setLobby(null);
+          else setLobby((current) => current ? { ...current, ...(payload.new as Partial<Lobby>) } : current);
+        },
       )
       .on(
         "postgres_changes",
@@ -304,13 +310,33 @@ export default function MultiplayerPage() {
           table: "lobby_players",
           filter: `lobby_id=eq.${roomId}`,
         },
-        () => void loadRoom(roomId),
+        (payload) => {
+          if (payload.eventType !== "UPDATE") { void loadRoom(roomId); return; }
+          const changed = payload.new as Partial<Player> & { user_id?: string };
+          setPlayers((current) => current.map((player) =>
+            player.user_id === changed.user_id ? { ...player, ...changed } : player));
+        },
       )
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [lobby, loadRoom]);
+  }, [lobby?.id, loadRoom]);
+
+  useEffect(() => {
+    if (!lobby?.id || !authUser) return;
+    const beat = () => void supabase.rpc("heartbeat_lobby", { target_lobby: lobby.id }).then(({ error: heartbeatError }) => {
+      if (heartbeatError) {
+        setLobby(null);
+        setPlayers([]);
+        setError("La sala ya no está disponible.");
+        history.replaceState(null, "", "/multiplayer");
+      }
+    });
+    beat();
+    const timer = window.setInterval(beat, 15_000);
+    return () => window.clearInterval(timer);
+  }, [authUser, lobby?.id]);
 
   const createLobby = async () => {
     setWorking(true);
@@ -476,6 +502,16 @@ export default function MultiplayerPage() {
     }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  const leaveLobby = async () => {
+    if (!lobby) return;
+    setWorking(true); setError("");
+    const { error: leaveError } = await supabase.rpc("leave_lobby", { target_lobby: lobby.id });
+    setWorking(false);
+    if (leaveError) { setError(leaveError.message); return; }
+    setLobby(null); setPlayers([]); setStartedAt(0); setLocalFinished(false);
+    history.replaceState(null, "", "/multiplayer");
   };
 
   const returnToLobby = async () => {
@@ -768,7 +804,7 @@ export default function MultiplayerPage() {
       await loadRoom(lobby.id);
     };
     publish();
-    const timer = window.setInterval(publish, 1000);
+    const timer = window.setInterval(publish, 2000);
     return () => window.clearInterval(timer);
   }, [authUser?.id, loadRoom, lobby, localFinished, startedAt]);
 
@@ -935,6 +971,7 @@ export default function MultiplayerPage() {
       </main>
     );
 
+  const isHost = lobby.host_id === authUser.id;
   const showResults = localFinished || lobby.status === "finished";
   if (showResults)
     return (
@@ -973,10 +1010,10 @@ export default function MultiplayerPage() {
             ))}
           </div>
           <button
-            onClick={() => void returnToLobby()}
+            onClick={() => void (isHost ? returnToLobby() : leaveLobby())}
             className="mt-7 w-full rounded-xl bg-white py-3 text-center font-bold text-black"
           >
-            Volver a la lobby
+            {isHost ? "Volver a la lobby" : "Salir de la sala"}
           </button>
         </div>
       </main>
@@ -987,9 +1024,9 @@ export default function MultiplayerPage() {
     <main className="min-h-screen bg-[#07080d] p-4 text-white">
       <div className="mx-auto max-w-6xl py-6">
         <header className="flex flex-wrap items-center justify-between gap-3">
-          <Link href="/" className="font-bold">
-            TypeTheLyrics
-          </Link>
+          <div className="flex items-center gap-3"><Link href="/" className="font-bold">TypeTheLyrics</Link>
+            <button disabled={working} onClick={() => void leaveLobby()} className="flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-zinc-400 hover:text-white disabled:opacity-50"><LogOut size={14}/> Salir</button>
+          </div>
           <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2">
             <Radio size={15} className="text-emerald-300" />
             <span className="text-xs text-zinc-400">SALA</span>
