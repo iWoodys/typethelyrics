@@ -18,7 +18,7 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: pg_dump "$SUPABASE_DB_URL" --format=custom --no-owner --file=typethelyrics.dump
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: supabase-${{ github.run_id }}
           path: typethelyrics.dump
