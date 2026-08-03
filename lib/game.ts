@@ -77,6 +77,26 @@ export const GAME_MODE_DETAILS: Record<
   },
 };
 
+// En una sala todos comparten el mismo reloj. Pausar la canción para un solo
+// jugador rompería la sincronización, por eso Relajado avanza sin penalizar.
+export const MULTIPLAYER_GAME_MODE_DETAILS: typeof GAME_MODE_DETAILS = {
+  ...GAME_MODE_DETAILS,
+  relaxed: {
+    name: "Relajado",
+    description: "Seguí la canción sin penalización por versos incompletos.",
+    rules: [
+      "Los versos avanzan con la música para mantener sincronizada la sala.",
+      "Una frase incompleta no resta puntos ni rompe el combo.",
+      "La pausa para terminar versos está disponible en el modo individual.",
+    ],
+  },
+};
+
+export const multiplayerLinePolicy = (mode: GameMode) => ({
+  advanceWithClock: mode !== "practice",
+  penalizeMissed: mode !== "relaxed" && mode !== "practice",
+});
+
 export const normalizeText = (
   value: string,
   expert: boolean,

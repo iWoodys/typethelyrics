@@ -29,7 +29,8 @@ import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import {
   GameMode,
-  GAME_MODE_DETAILS,
+  MULTIPLAYER_GAME_MODE_DETAILS,
+  multiplayerLinePolicy,
   normalizeText,
   rankFor,
 } from "@/lib/game";
@@ -656,8 +657,7 @@ export default function MultiplayerPage() {
     !localFinished &&
     !allLinesComplete &&
     lineIndex <= timedIndex &&
-    !playbackPaused &&
-    synchronized;
+    !playbackPaused;
   const currentWord = useMemo(() => {
     if (!currentLine) return -1;
     const next =
@@ -686,13 +686,14 @@ export default function MultiplayerPage() {
       !startedAt ||
       localFinished ||
       timedIndex <= lineIndex ||
-      gameMode === "relaxed" ||
-      gameMode === "practice"
+      !multiplayerLinePolicy(gameMode).advanceWithClock
     )
       return;
     const missed = timedIndex - lineIndex;
-    setMistakes((value) => value + missed);
-    setCombo(0);
+    if (multiplayerLinePolicy(gameMode).penalizeMissed) {
+      setMistakes((value) => value + missed);
+      setCombo(0);
+    }
     setTyped("");
     setTypedLineIndex(timedIndex);
     setLineIndex(timedIndex);
@@ -1067,21 +1068,21 @@ export default function MultiplayerPage() {
                     Modo de juego
                   </p>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                    {(Object.keys(GAME_MODE_DETAILS) as GameMode[]).map(
+                    {(Object.keys(MULTIPLAYER_GAME_MODE_DETAILS) as GameMode[]).map(
                       (modeKey) => (
                         <button
                           key={modeKey}
                           onClick={() => void changeLobbyMode(modeKey)}
-                          title={GAME_MODE_DETAILS[modeKey].description}
+                          title={MULTIPLAYER_GAME_MODE_DETAILS[modeKey].description}
                           className={`rounded-xl border px-3 py-2 text-sm font-bold ${selectedMode === modeKey ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/10 bg-black/20 text-zinc-400"}`}
                         >
-                          {GAME_MODE_DETAILS[modeKey].name}
+                          {MULTIPLAYER_GAME_MODE_DETAILS[modeKey].name}
                         </button>
                       ),
                     )}
                   </div>
                   <p className="mt-2 text-xs text-zinc-500">
-                    {GAME_MODE_DETAILS[selectedMode].description}
+                    {MULTIPLAYER_GAME_MODE_DETAILS[selectedMode].description}
                   </p>
                 </div>
                 <form onSubmit={searchLobbySongs}>
@@ -1166,7 +1167,7 @@ export default function MultiplayerPage() {
             {!inGame && lobby.host_id !== authUser.id && !lobby.track_title && (
               <div className="grid min-h-64 place-items-center text-center text-zinc-500">
                 El anfitrión está eligiendo una canción en modo{" "}
-                {GAME_MODE_DETAILS[gameMode].name}…
+                {MULTIPLAYER_GAME_MODE_DETAILS[gameMode].name}…
               </div>
             )}
             {!inGame && lobby.track_title && (
@@ -1175,7 +1176,7 @@ export default function MultiplayerPage() {
                   <h2 className="text-2xl font-black">{lobby.track_title}</h2>
                   <p className="text-zinc-400">{lobby.track_artist}</p>
                   <span className="mt-2 inline-block rounded-full bg-violet-500/15 px-3 py-1 text-xs font-bold text-violet-300">
-                    {GAME_MODE_DETAILS[gameMode].name}
+                    {MULTIPLAYER_GAME_MODE_DETAILS[gameMode].name}
                   </span>
                   <p className="mt-3 text-sm text-amber-200">
                     Presioná Play en Spotify. La partida se habilita cuando todos tengan audio.
@@ -1221,7 +1222,7 @@ export default function MultiplayerPage() {
                         <b className="text-white">{score.toLocaleString()}</b>
                       </span>
                       <span className="rounded-full bg-violet-500/15 px-3 py-1 text-xs font-bold text-violet-300">
-                        {GAME_MODE_DETAILS[gameMode].name}
+                        {MULTIPLAYER_GAME_MODE_DETAILS[gameMode].name}
                       </span>
                       {gameMode === "survival" && (
                         <span className="flex items-center gap-1 text-red-300">
@@ -1234,7 +1235,7 @@ export default function MultiplayerPage() {
                     </div>
                     {!synchronized && (
                       <div role="status" className="mb-4 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-center text-sm text-amber-100">
-                        Resincronizando Spotify ({Math.round(playbackDrift || 0)} ms). La escritura se reanudará cuando el audio vuelva al tiempo de la sala.
+                        Spotify está fuera del tiempo de la sala ({Math.round(playbackDrift || 0)} ms). Los versos seguirán avanzando para no congelar la partida.
                       </div>
                     )}
                     <div
