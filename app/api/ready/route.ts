@@ -14,6 +14,7 @@ export async function GET() {
     if (error) throw error;
     return NextResponse.json({ status: "ready", database: "ok", latency_ms: Date.now() - startedAt }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return NextResponse.json({ status: "unavailable", database: "error", detail: error instanceof Error ? error.message : "Error desconocido" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    console.error("Readiness check failed:", error);
+    return NextResponse.json({ status: "unavailable", database: "error" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }

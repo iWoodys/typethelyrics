@@ -10,6 +10,9 @@ export async function GET(request: Request) {
   const { data: results, error } = await supabase.rpc('get_track_rankings', {
     target_track_id: trackId, target_mode: selectedMode,
   });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error('Could not load track rankings:', error);
+    return NextResponse.json({ error: 'No se pudo cargar el ranking.' }, { status: 500 });
+  }
   return NextResponse.json({ rankings: results || [] });
 }

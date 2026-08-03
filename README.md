@@ -31,8 +31,9 @@ Para una instalación nueva, ejecutá `supabase-schema.sql` y luego las migracio
 3. `migrations/008_admin_announcements.sql`
 4. `migrations/009_audit_hardening.sql`
 5. `migrations/010_lobby_reliability.sql`
+6. `migrations/011_lobby_chat.sql`
 
-Las migraciones 009 y 010 son obligatorias. La 010 valida las partidas en el servidor, evita sobrecupos, agrega presencia/salida de salas y registra los cambios Premium del administrador.
+Las migraciones 009, 010 y 011 son obligatorias. La 010 valida las partidas en el servidor, evita sobrecupos, agrega presencia/salida de salas y registra los cambios Premium del administrador. La 011 instala el chat de las salas con RLS, antispam y actualizaciones en tiempo real.
 
 ## Spotify
 

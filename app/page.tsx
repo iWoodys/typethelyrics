@@ -2117,7 +2117,10 @@ export default function Home() {
             </label>
             <button
               onClick={() => {
-                localStorage.clear();
+                Object.values(LS).forEach((key) => {
+                  localStorage.removeItem(key);
+                  sessionStorage.removeItem(key);
+                });
                 location.reload();
               }}
               className="mt-5 w-full rounded-xl border border-red-400/20 py-3 text-sm text-red-300"

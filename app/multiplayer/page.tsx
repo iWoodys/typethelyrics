@@ -17,10 +17,12 @@ import {
   Heart,
   LogIn,
   LogOut,
+  MessageCircle,
   Music2,
   Play,
   Radio,
   Search,
+  Send,
   Trophy,
   UserRound,
   Users,
@@ -77,6 +79,14 @@ type SongResult = {
   image?: string;
   url: string;
 };
+type LobbyMessage = {
+  id: string;
+  lobby_id: string;
+  user_id: string;
+  body: string;
+  created_at: string;
+  users: Profile;
+};
 
 const premiumActive = (
   profile?: Pick<Profile, "is_premium" | "premium_until"> | null,
@@ -124,6 +134,10 @@ export default function MultiplayerPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [lobby, setLobby] = useState<Lobby | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [messages, setMessages] = useState<LobbyMessage[]>([]);
+  const [chatText, setChatText] = useState("");
+  const [chatError, setChatError] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
   const [code, setCode] = useState("");
   const [songUrl, setSongUrl] = useState("");
   const [selectedMode, setSelectedMode] = useState<GameMode>("rhythm");
@@ -153,6 +167,7 @@ export default function MultiplayerPage() {
   const [allLinesComplete, setAllLinesComplete] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const feedbackTimer = useRef<number | null>(null);
   const submittedRef = useRef(false);
   const lastLineRef = useRef(0);
@@ -164,6 +179,22 @@ export default function MultiplayerPage() {
   const [playbackUpdatedAt, setPlaybackUpdatedAt] = useState(0);
   const [playbackPaused, setPlaybackPaused] = useState(true);
   const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
+
+  const loadMessages = useCallback(async (roomId: string) => {
+    const { data, error: messagesError } = await supabase
+      .from("lobby_messages")
+      .select(
+        "id,lobby_id,user_id,body,created_at,users!lobby_messages_user_id_fkey(id,username,avatar_url,is_premium,premium_until)",
+      )
+      .eq("lobby_id", roomId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (messagesError) {
+      setChatError("El chat no esta disponible en este momento.");
+      return;
+    }
+    setMessages([...(data ?? [])].reverse() as unknown as LobbyMessage[]);
+  }, []);
 
   const loadRoom = useCallback(async (roomId: string) => {
     const [{ data: room }, { data: memberRows }] = await Promise.all([
@@ -318,11 +349,34 @@ export default function MultiplayerPage() {
             player.user_id === changed.user_id ? { ...player, ...changed } : player));
         },
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "lobby_messages",
+          filter: `lobby_id=eq.${roomId}`,
+        },
+        () => void loadMessages(roomId),
+      )
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [lobby?.id, loadRoom]);
+  }, [lobby?.id, loadMessages, loadRoom]);
+
+  useEffect(() => {
+    if (!lobby?.id || lobby.status !== "waiting") {
+      setChatText("");
+      setChatError("");
+      return;
+    }
+    void loadMessages(lobby.id);
+  }, [lobby?.id, lobby?.status, loadMessages]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [messages.length]);
 
   useEffect(() => {
     if (!lobby?.id || !authUser) return;
@@ -505,13 +559,32 @@ export default function MultiplayerPage() {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
+  const sendLobbyMessage = async (event: FormEvent) => {
+    event.preventDefault();
+    const messageBody = chatText.trim().replace(/\s+/g, " ");
+    if (!lobby || lobby.status !== "waiting" || !messageBody) return;
+    setSendingMessage(true);
+    setChatError("");
+    const { error: messageError } = await supabase.rpc("send_lobby_message", {
+      target_lobby: lobby.id,
+      message_body: messageBody,
+    });
+    if (messageError) {
+      setChatError(messageError.message);
+    } else {
+      setChatText("");
+      await loadMessages(lobby.id);
+    }
+    setSendingMessage(false);
+  };
+
   const leaveLobby = async () => {
     if (!lobby) return;
     setWorking(true); setError("");
     const { error: leaveError } = await supabase.rpc("leave_lobby", { target_lobby: lobby.id });
     setWorking(false);
     if (leaveError) { setError(leaveError.message); return; }
-    setLobby(null); setPlayers([]); setStartedAt(0); setLocalFinished(false);
+    setLobby(null); setPlayers([]); setMessages([]); setStartedAt(0); setLocalFinished(false);
     history.replaceState(null, "", "/multiplayer");
   };
 
@@ -1367,6 +1440,73 @@ export default function MultiplayerPage() {
                 </div>
               ))}
             </div>
+            {!inGame && (
+              <div className="mt-6 border-t border-white/10 pt-5">
+                <div className="flex items-center gap-2">
+                  <MessageCircle size={17} className="text-cyan-300" />
+                  <h2 className="font-bold">Chat de la sala</h2>
+                </div>
+                <div
+                  className="mt-3 h-64 space-y-3 overflow-y-auto rounded-2xl border border-white/5 bg-black/20 p-3"
+                  aria-live="polite"
+                >
+                  {messages.length === 0 && (
+                    <p className="py-10 text-center text-sm text-zinc-600">
+                      Todavia no hay mensajes.
+                    </p>
+                  )}
+                  {messages.map((message) => (
+                    <div key={message.id} className="flex items-start gap-2">
+                      <Avatar profile={message.users} size="sm" />
+                      <div className="min-w-0 flex-1 rounded-xl bg-white/5 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <b className="truncate text-xs text-violet-200">
+                            {message.users.username}
+                          </b>
+                          <time
+                            dateTime={message.created_at}
+                            className="shrink-0 text-[10px] text-zinc-600"
+                          >
+                            {new Date(message.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </time>
+                        </div>
+                        <p className="mt-1 break-words text-sm text-zinc-300">
+                          {message.body}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+                <form onSubmit={sendLobbyMessage} className="mt-3 flex gap-2">
+                  <input
+                    value={chatText}
+                    onChange={(event) => setChatText(event.target.value)}
+                    maxLength={300}
+                    placeholder="Escribi un mensaje..."
+                    aria-label="Mensaje para el chat de la sala"
+                    className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                  />
+                  <button
+                    type="submit"
+                    disabled={sendingMessage || !chatText.trim()}
+                    aria-label="Enviar mensaje"
+                    className="grid w-11 place-items-center rounded-xl bg-cyan-400 text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Send size={17} />
+                  </button>
+                </form>
+                {chatError && (
+                  <p className="mt-2 text-xs text-red-300">{chatError}</p>
+                )}
+                <p className="mt-2 text-[11px] text-zinc-600">
+                  El chat se cierra automaticamente cuando comienza la partida.
+                </p>
+              </div>
+            )}
           </aside>
         </div>
       </div>

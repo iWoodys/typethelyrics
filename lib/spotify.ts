@@ -50,7 +50,7 @@ const spotifyFetch = async <T>(path: string, userToken?: string): Promise<T> => 
   const token = userToken || await getAccessToken();
   const response = await fetch(`https://api.spotify.com/v1${path}`, {
     headers: { Authorization: `Bearer ${token}` },
-    next: { revalidate: 300 },
+    ...(userToken ? { cache: 'no-store' as const } : { next: { revalidate: 300 } }),
   });
   if (!response.ok) throw new Error(`Spotify respondió con estado ${response.status}.`);
   return response.json() as Promise<T>;
@@ -69,7 +69,7 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
     });
     const response = await fetch(`https://lrclib.net/api/get?${params}`, {
       headers: {
-        'Lrclib-Client': 'TypeTheLyrics/0.1.0 (https://github.com/ArjunCodess/typethelyrics)',
+        'Lrclib-Client': 'TypeTheLyrics/0.1.0 (https://github.com/iWoodys/typethelyrics)',
       },
       next: { revalidate: 86400 },
     });
