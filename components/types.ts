@@ -8,6 +8,11 @@ export interface LyricsResponse {
     id: number;
     duration: number;
   };
+  syncAdjustment?: {
+    confidence: "exact" | "high" | "medium";
+    durationDeltaMs: number;
+    suggestedTimeScale: number;
+  };
 }
 
 export interface TrackDetails {

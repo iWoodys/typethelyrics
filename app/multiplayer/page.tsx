@@ -37,6 +37,13 @@ import {
   rankFor,
 } from "@/lib/game";
 import type { LyricsResponse, SyncedLyric } from "@/components/types";
+import { scaleLyricsToPlayback } from "@/lib/synchronization";
+import {
+  SpotifyEmbed,
+  type SpotifyEmbedCommand,
+  type SpotifyEmbedHandle,
+  type SpotifyPlaybackState,
+} from "@/components/spotify-embed";
 
 type Profile = {
   id: string;
@@ -163,9 +170,10 @@ export default function MultiplayerPage() {
   const [lives, setLives] = useState(3);
   const [startedAt, setStartedAt] = useState(0);
   const [clock, setClock] = useState(Date.now());
+  const [serverClockOffset, setServerClockOffset] = useState(0);
   const [localFinished, setLocalFinished] = useState(false);
   const [allLinesComplete, setAllLinesComplete] = useState(false);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const spotifyRef = useRef<SpotifyEmbedHandle>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const feedbackTimer = useRef<number | null>(null);
@@ -175,10 +183,46 @@ export default function MultiplayerPage() {
   const lastProgressRef = useRef("");
   const publishingProgressRef = useRef(false);
   const audioReadySentRef = useRef<boolean | null>(null);
+  const lastAudioResyncRef = useRef(0);
   const [playbackPosition, setPlaybackPosition] = useState<number | null>(null);
   const [playbackUpdatedAt, setPlaybackUpdatedAt] = useState(0);
   const [playbackPaused, setPlaybackPaused] = useState(true);
+  const [playbackBuffering, setPlaybackBuffering] = useState(false);
   const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
+
+  const synchronizeServerClock = useCallback(async () => {
+    const samples: Array<{ offset: number; roundTrip: number }> = [];
+    for (let index = 0; index < 5; index += 1) {
+      const started = Date.now();
+      try {
+        const response = await fetch(`/api/time?sample=${index}`, {
+          cache: "no-store",
+        });
+        const received = Date.now();
+        const data = (await response.json()) as { now?: number };
+        if (!response.ok || !Number.isFinite(data.now)) continue;
+        samples.push({
+          offset: Number(data.now) - (started + received) / 2,
+          roundTrip: received - started,
+        });
+      } catch {
+        // Si una muestra falla, las restantes siguen siendo suficientes.
+      }
+    }
+    if (!samples.length) return;
+    const best = samples
+      .sort((left, right) => left.roundTrip - right.roundTrip)
+      .slice(0, 3)
+      .map((sample) => sample.offset)
+      .sort((left, right) => left - right);
+    setServerClockOffset(best[Math.floor(best.length / 2)] || 0);
+  }, []);
+
+  useEffect(() => {
+    void synchronizeServerClock();
+    const timer = window.setInterval(() => void synchronizeServerClock(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [synchronizeServerClock]);
 
   const loadMessages = useCallback(async (roomId: string) => {
     const { data, error: messagesError } = await supabase
@@ -449,6 +493,14 @@ export default function MultiplayerPage() {
       };
       if (!response.ok)
         throw new Error(data.error || "No encontramos letras sincronizadas.");
+      const sharedTimeScale =
+        data.syncAdjustment?.confidence === "medium"
+          ? 1
+          : data.syncAdjustment?.suggestedTimeScale || 1;
+      const sharedLyrics = scaleLyricsToPlayback(
+        data.syncedLyrics,
+        sharedTimeScale,
+      );
       const { error: rpcError } = await supabase.rpc("configure_lobby", {
         target_lobby: lobby.id,
         new_track_id: match[1],
@@ -457,7 +509,7 @@ export default function MultiplayerPage() {
         new_artist: data.trackDetails.track_artist,
         new_image: data.trackDetails.album_image || null,
         new_duration: data.trackDetails.track_duration_ms || 0,
-        new_lyrics: data.syncedLyrics,
+        new_lyrics: sharedLyrics,
         new_mode: selectedMode,
       });
       if (rpcError) throw rpcError;
@@ -620,40 +672,39 @@ export default function MultiplayerPage() {
   };
 
   const sendPlayer = useCallback(
-    (command: string) =>
-      iframeRef.current?.contentWindow?.postMessage({ command }, "*"),
+    (command: SpotifyEmbedCommand) => spotifyRef.current?.command(command),
     [],
   );
   useEffect(() => {
     audioReadySentRef.current = null;
     setPlaybackPosition(null);
     setPlaybackPaused(true);
+    setPlaybackBuffering(false);
   }, [lobby?.spotify_track_id]);
-  useEffect(() => {
-    const onPlayback = (event: MessageEvent) => {
-      if (event.origin !== "https://open.spotify.com" || event.data?.type !== "playback_update") return;
-      const payload = event.data?.payload;
+  const handlePlaybackUpdate = useCallback(
+    (payload: SpotifyPlaybackState) => {
       if (!lobby) return;
-      setPlaybackPaused(Boolean(payload?.isPaused));
-      if (typeof payload?.position === "number") {
-        setPlaybackPosition(payload.position);
-        setPlaybackUpdatedAt(Date.now());
-      }
+      const paused = payload.isPaused || payload.isBuffering;
+      setPlaybackPaused(paused);
+      setPlaybackBuffering(payload.isBuffering);
+      setPlaybackPosition(payload.position);
+      setPlaybackUpdatedAt(Date.now());
       if (lobby.status !== "waiting") return;
-      const ready = !payload?.isPaused;
+      const ready = !paused;
       if (audioReadySentRef.current === ready) return;
       audioReadySentRef.current = ready;
-      void supabase.rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: ready })
+      void supabase
+        .rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: ready })
         .then(() => loadRoom(lobby.id));
-    };
-    window.addEventListener("message", onPlayback);
-    return () => window.removeEventListener("message", onPlayback);
-  }, [lobby, loadRoom]);
+    },
+    [lobby, loadRoom],
+  );
   useEffect(() => {
     if (!lobby?.start_at || !["countdown", "playing"].includes(lobby.status))
       return;
     const tick = () => {
-      const remaining = new Date(lobby.start_at!).getTime() - Date.now();
+      const remaining =
+        new Date(lobby.start_at!).getTime() - (Date.now() + serverClockOffset);
       setCountdown(remaining > 0 ? Math.ceil(remaining / 1000) : 0);
       if (remaining <= 0 && !startedAt) {
         setLineIndex(0);
@@ -670,7 +721,14 @@ export default function MultiplayerPage() {
     tick();
     const timer = window.setInterval(tick, 100);
     return () => window.clearInterval(timer);
-  }, [lobby?.id, lobby?.start_at, lobby?.status, sendPlayer, startedAt]);
+  }, [
+    lobby?.id,
+    lobby?.start_at,
+    lobby?.status,
+    sendPlayer,
+    serverClockOffset,
+    startedAt,
+  ]);
 
   useEffect(() => {
     if (lobby?.status !== "waiting" || !localFinished) return;
@@ -687,7 +745,8 @@ export default function MultiplayerPage() {
     return () => window.clearInterval(timer);
   }, [localFinished, startedAt]);
 
-  const wallPosition = startedAt ? Math.max(0, clock - startedAt) : 0;
+  const roomClock = clock + serverClockOffset;
+  const wallPosition = startedAt ? Math.max(0, roomClock - startedAt) : 0;
   // El reloj compartido manda: una pausa o reinicio local de Spotify nunca puede
   // atrasar las letras ni extender la partida para un solo jugador.
   const gamePosition = wallPosition;
@@ -698,6 +757,29 @@ export default function MultiplayerPage() {
     ? null
     : estimatedPlaybackPosition - gamePosition;
   const synchronized = playbackDrift === null || gamePosition < 5_000 || Math.abs(playbackDrift) <= 1_500;
+
+  useEffect(() => {
+    if (
+      !startedAt ||
+      localFinished ||
+      playbackDrift === null ||
+      playbackPaused ||
+      playbackBuffering ||
+      gamePosition < 5_000 ||
+      Math.abs(playbackDrift) <= 1_500 ||
+      Date.now() - lastAudioResyncRef.current < 5_000
+    )
+      return;
+    lastAudioResyncRef.current = Date.now();
+    spotifyRef.current?.seek(gamePosition / 1000);
+  }, [
+    gamePosition,
+    localFinished,
+    playbackBuffering,
+    playbackDrift,
+    playbackPaused,
+    startedAt,
+  ]);
   const lyrics = useMemo(() => lobby?.lyrics || [], [lobby?.lyrics]);
   const gameMode: GameMode = lobby?.game_mode || "rhythm";
   const timedIndex = useMemo(() => {
@@ -1124,14 +1206,10 @@ export default function MultiplayerPage() {
         <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_320px]">
           <section className="rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7">
             {lobby.spotify_track_id && (
-              <iframe
-                ref={iframeRef}
-                title="Spotify"
-                src={`https://open.spotify.com/embed/track/${lobby.spotify_track_id}?theme=0`}
-                width="100%"
-                height="152"
-                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                className="rounded-xl"
+              <SpotifyEmbed
+                ref={spotifyRef}
+                trackId={lobby.spotify_track_id}
+                onPlaybackUpdate={handlePlaybackUpdate}
               />
             )}
             {!inGame && lobby.host_id === authUser.id && (
@@ -1308,7 +1386,12 @@ export default function MultiplayerPage() {
                     </div>
                     {!synchronized && (
                       <div role="status" className="mb-4 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-center text-sm text-amber-100">
-                        Spotify está fuera del tiempo de la sala ({Math.round(playbackDrift || 0)} ms). Los versos seguirán avanzando para no congelar la partida.
+                        Spotify está fuera del tiempo de la sala ({Math.round(playbackDrift || 0)} ms). Estamos corrigiendo el audio sin atrasar los versos.
+                      </div>
+                    )}
+                    {playbackBuffering && (
+                      <div role="status" className="mb-4 rounded-xl border border-cyan-300/30 bg-cyan-300/10 p-3 text-center text-sm text-cyan-100">
+                        Spotify está cargando. La escritura se reanudará cuando vuelva el audio.
                       </div>
                     )}
                     <div

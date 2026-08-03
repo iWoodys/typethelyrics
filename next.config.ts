@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const scriptSources = process.env.NODE_ENV === "development"
-  ? "'self' 'unsafe-inline' 'unsafe-eval'"
-  : "'self' 'unsafe-inline'";
+  ? "'self' 'unsafe-inline' 'unsafe-eval' https://open.spotify.com"
+  : "'self' 'unsafe-inline' https://open.spotify.com";
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: process.cwd(),

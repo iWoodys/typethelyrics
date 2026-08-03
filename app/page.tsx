@@ -54,6 +54,11 @@ import type {
 } from "@/components/types";
 import { GameModesModal } from "@/components/game-modes-modal";
 import {
+  SpotifyEmbed,
+  type SpotifyEmbedCommand,
+  type SpotifyEmbedHandle,
+} from "@/components/spotify-embed";
+import {
   difficultyFor,
   GameMode,
   MODE_INFO,
@@ -63,6 +68,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { validateSyncedLyrics } from "@/lib/lyrics";
 import { readStoredJson, writeStoredJson } from "@/lib/safe-storage";
+import { lyricClockFromPlayback, scaleLyricsToPlayback } from "@/lib/synchronization";
 
 type SongCard = {
   id: string;
@@ -119,6 +125,11 @@ type Announcement = {
   title: string;
   body: string;
 };
+type SyncProfile = {
+  offsetMs: number;
+  timeScale: number;
+  sourceId?: number;
+};
 
 const EMPTY_STATS: Stats = {
   games: 0,
@@ -134,6 +145,7 @@ const LS = {
   stats: "ttl-stats-v2",
   edits: "ttl-edits-v2",
   offsets: "ttl-song-offsets-v1",
+  syncProfiles: "ttl-sync-profiles-v1",
   originals: "ttl-original-lyrics-v1",
   settings: "ttl-settings-v2",
   guide: "ttl-guide-seen-v1",
@@ -145,7 +157,7 @@ const GUIDE_STEPS = [
   { title: "1. Elegí una canción", text: "Buscala por nombre o pegá un enlace de una canción de Spotify. Para playlists, conectá Spotify: desde 2026 sólo se permiten playlists propias o colaborativas." },
   { title: "2. Iniciá la reproducción", text: "Pulsá Play dentro de Spotify y después Iniciar partida. Si la canción tiene una introducción larga, la escritura permanecerá bloqueada hasta que realmente empiece la primera voz." },
   { title: "3. Escribí cuando se ilumine", text: "Cuando aparezca «Escribí ahora», usá el teclado directamente. Entre versos el juego espera; si Spotify está pausado, la pantalla te lo indicará." },
-  { title: "4. Calibrá sólo si hace falta", text: "Pulsá «Calibrar canción» para descartar ajustes locales, aplicar automáticamente la sincronización completa más reciente y volver a abrir la canción." },
+  { title: "4. Calibrá sólo si hace falta", text: "Pulsá «Calibrar canción» para descartar ajustes locales, buscar la edición de LRCLIB que mejor coincida por artista, versión y duración, y aplicar una corrección temporal segura." },
 ];
 
 export default function Home() {
@@ -155,10 +167,15 @@ export default function Home() {
   const [lyrics, setLyrics] = useState<SyncedLyric[]>([]);
   const [position, setPosition] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [timeScale, setTimeScale] = useState(1);
+  const [sourceTimeScale, setSourceTimeScale] = useState(1);
   const [sourceLyrics, setSourceLyrics] = useState<SyncedLyric[]>([]);
   const [lyricsSource, setLyricsSource] = useState<LyricsResponse["lyricsSource"]>(undefined);
   const [lyricsOrigin, setLyricsOrigin] = useState<"LRCLIB" | "personal" | "community">("LRCLIB");
   const [syncMessage, setSyncMessage] = useState("");
+  const [syncConfidence, setSyncConfidence] = useState<
+    "exact" | "high" | "medium"
+  >("medium");
   const [mode, setMode] = useState<GameMode>("rhythm");
   const [lineIndex, setLineIndex] = useState(0);
   const [typed, setTyped] = useState("");
@@ -168,6 +185,7 @@ export default function Home() {
   );
   const [started, setStarted] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [buffering, setBuffering] = useState(false);
   const [finished, setFinished] = useState(false);
   const [allLinesComplete, setAllLinesComplete] = useState(false);
   const [score, setScore] = useState(0);
@@ -214,7 +232,7 @@ export default function Home() {
   const undoRef = useRef<SyncedLyric[][]>([]);
   const redoRef = useRef<SyncedLyric[][]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const spotifyRef = useRef<SpotifyEmbedHandle>(null);
   const lastTypedLength = useRef(0);
   const feedbackTimer = useRef<number | null>(null);
   const lineResultsRef = useRef<LineResult[]>([]);
@@ -329,6 +347,16 @@ export default function Home() {
   }, [offset, trackId]);
   useEffect(() => {
     if (!trackId) return;
+    const profiles = readStoredJson<Record<string, SyncProfile>>(LS.syncProfiles, {});
+    profiles[trackId] = {
+      offsetMs: offset,
+      timeScale,
+      sourceId: lyricsSource?.id,
+    };
+    writeStoredJson(LS.syncProfiles, profiles);
+  }, [lyricsSource?.id, offset, timeScale, trackId]);
+  useEffect(() => {
+    if (!trackId) return;
     fetch(`/api/rankings?trackId=${trackId}&mode=${mode}`)
       .then((response) => response.json())
       .then((data) => setRankings(data.rankings || []))
@@ -336,25 +364,11 @@ export default function Home() {
   }, [trackId, mode, finished]);
 
   const sendPlayer = useCallback(
-    (command: string) =>
-      iframeRef.current?.contentWindow?.postMessage({ command }, "*"),
+    (command: SpotifyEmbedCommand) => spotifyRef.current?.command(command),
     [],
   );
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (
-        event.origin !== "https://open.spotify.com" ||
-        event.data?.type !== "playback_update"
-      )
-        return;
-      setPosition(event.data.payload?.position || 0);
-      setPlaying(!event.data.payload?.isPaused);
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
 
-  const effectivePosition = position + offset;
+  const effectivePosition = lyricClockFromPlayback(position, offset, timeScale);
   const timedIndex = useMemo(() => {
     let found = 0;
     lyrics.forEach((line, index) => {
@@ -383,7 +397,7 @@ export default function Home() {
     noPunctuation,
   );
   const lineWaitMs = current
-    ? Math.max(0, current.startTimeMs - effectivePosition)
+    ? Math.max(0, current.startTimeMs * timeScale - (position + offset))
     : 0;
   const singerStarted = !!current && effectivePosition >= current.startTimeMs;
   const canType =
@@ -820,6 +834,7 @@ export default function Home() {
       const edits = readStoredJson<Record<string, SyncedLyric[]>>(LS.edits, {});
       const originals = readStoredJson<Record<string, boolean>>(LS.originals, {});
       const offsets = readStoredJson<Record<string, number>>(LS.offsets, {});
+      const profiles = readStoredJson<Record<string, SyncProfile>>(LS.syncProfiles, {});
       const originalLyrics = validateSyncedLyrics(data.syncedLyrics, data.trackDetails.track_duration_ms);
       let loadedLyrics = originalLyrics;
       let loadedOrigin: "LRCLIB" | "personal" | "community" = "LRCLIB";
@@ -843,14 +858,33 @@ export default function Home() {
           }
         }
       }
-      setOffset(offsets[match[1]] || 0);
+      const suggestedScale = data.syncAdjustment?.suggestedTimeScale || 1;
+      const storedProfile = profiles[match[1]];
+      const sameSource =
+        !storedProfile?.sourceId || storedProfile.sourceId === data.lyricsSource?.id;
+      const selectedScale =
+        loadedOrigin === "LRCLIB"
+          ? automaticCalibration
+            ? suggestedScale
+            : sameSource
+              ? storedProfile?.timeScale || suggestedScale
+              : suggestedScale
+          : 1;
+      setOffset(
+        automaticCalibration
+          ? 0
+          : storedProfile?.offsetMs ?? offsets[match[1]] ?? 0,
+      );
+      setTimeScale(selectedScale);
+      setSourceTimeScale(suggestedScale);
+      setSyncConfidence(data.syncAdjustment?.confidence || "medium");
       setTrackId(match[1]);
       setTrack(data.trackDetails);
       setSourceLyrics(originalLyrics);
       setLyricsSource(data.lyricsSource);
       setLyricsOrigin(loadedOrigin);
       setSyncMessage(automaticCalibration
-        ? `Sincronización completa aplicada automáticamente (${loadedOrigin === "community" ? "corregida por administración" : "fuente LRCLIB"}).`
+        ? `Sincronización inteligente aplicada (${loadedOrigin === "community" ? "corregida por administración" : `${data.syncAdjustment?.confidence || "medium"}, escala ${selectedScale.toFixed(5)}`}).`
         : "");
       if (!loadedLyrics?.length)
         throw new Error("Esta canción no tiene letras sincronizadas disponibles.");
@@ -932,7 +966,8 @@ export default function Home() {
     if (!trackId) return;
     let validated: SyncedLyric[];
     try {
-      validated = validateSyncedLyrics(draftLyrics, track?.track_duration_ms);
+      const normalizedTimeline = scaleLyricsToPlayback(draftLyrics, timeScale);
+      validated = validateSyncedLyrics(normalizedTimeline, track?.track_duration_ms);
     } catch (reason) {
       setSyncMessage(reason instanceof Error ? reason.message : "La letra no es válida.");
       return;
@@ -945,6 +980,7 @@ export default function Home() {
     writeStoredJson(LS.originals, originals);
     setLyrics(validated);
     setLyricsOrigin("personal");
+    setTimeScale(1);
     setEditorOpen(false);
     const {
       data: { user },
@@ -973,6 +1009,7 @@ export default function Home() {
     setLyrics(sourceLyrics);
     setDraftLyrics(sourceLyrics);
     setLyricsOrigin("LRCLIB");
+    setTimeScale(sourceTimeScale);
     setSyncMessage("Se restauró la sincronización original de LRCLIB.");
     const { data } = await supabase.auth.getUser();
     if (data.user)
@@ -1018,18 +1055,22 @@ export default function Home() {
     const edits = readStoredJson<Record<string, SyncedLyric[]>>(LS.edits, {});
     const originals = readStoredJson<Record<string, boolean>>(LS.originals, {});
     const offsets = readStoredJson<Record<string, number>>(LS.offsets, {});
+    const profiles = readStoredJson<Record<string, SyncProfile>>(LS.syncProfiles, {});
     delete edits[trackId];
     delete originals[trackId];
     delete offsets[trackId];
+    delete profiles[trackId];
     writeStoredJson(LS.edits, edits);
     writeStoredJson(LS.originals, originals);
     writeStoredJson(LS.offsets, offsets);
+    writeStoredJson(LS.syncProfiles, profiles);
     sessionStorage.setItem(LS.calibrationReload, `https://open.spotify.com/track/${trackId}`);
     window.location.reload();
   };
 
   const resetLatency = () => {
     setOffset(0);
+    setTimeScale(1);
   };
   const importPlaylist = async (event: FormEvent) => {
     event.preventDefault();
@@ -1290,18 +1331,18 @@ export default function Home() {
                         {difficultyFor(lyrics)}
                       </span>
                       <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-emerald-300">
-                        Sincronizada
+                        Sincronización {syncConfidence === "exact" ? "exacta" : syncConfidence === "high" ? "alta" : "media"}
                       </span>
                     </div>
                   </div>
-                  <iframe
-                    ref={iframeRef}
-                    title="Reproductor Spotify"
-                    src={`https://open.spotify.com/embed/track/${trackId}?utm_source=generator&theme=0`}
-                    width="100%"
-                    height="152"
-                    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                    className="rounded-xl"
+                  <SpotifyEmbed
+                    ref={spotifyRef}
+                    trackId={trackId}
+                    onPlaybackUpdate={(state) => {
+                      setPosition(state.position);
+                      setBuffering(state.isBuffering);
+                      setPlaying(!state.isPaused && !state.isBuffering);
+                    }}
                   />
                   <div className="rounded-2xl border border-white/10 bg-white/[.04] p-4">
                     <p className="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">
@@ -1403,6 +1444,8 @@ export default function Home() {
                       >
                         {!started
                           ? "Prepará tus dedos"
+                          : buffering
+                            ? "Spotify está cargando · esperá un momento"
                           : !playing
                             ? "Spotify está pausado · presioná Play"
                           : canType
@@ -1534,7 +1577,7 @@ export default function Home() {
                     </button>
                     <button
                       onClick={resetLatency}
-                      disabled={offset === 0}
+                      disabled={offset === 0 && timeScale === 1}
                       className="flex items-center gap-1 rounded-full bg-white/5 px-3 py-2 text-zinc-300 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <RotateCcw size={14} /> Borrar calibración
@@ -1555,6 +1598,11 @@ export default function Home() {
                     <span className="rounded-full bg-white/5 px-3 py-2 text-zinc-400">
                       Fuente: {lyricsOrigin === "personal" ? "tu corrección" : lyricsOrigin === "community" ? "comunidad" : `LRCLIB${lyricsSource?.id ? ` #${lyricsSource.id}` : ""}`}
                     </span>
+                    {lyricsOrigin === "LRCLIB" && (
+                      <span className="rounded-full bg-cyan-400/10 px-3 py-2 text-cyan-200">
+                        Coincidencia {syncConfidence === "exact" ? "exacta" : syncConfidence === "high" ? "alta" : "media"} · escala {timeScale.toFixed(5)}
+                      </span>
+                    )}
                     <span className="rounded-full bg-white/5 px-3 py-2 text-zinc-500">
                       Esc pausa · Retroceso corrige
                     </span>
@@ -1923,7 +1971,12 @@ export default function Home() {
                         changeDraft((old) =>
                           old.map((item, i) =>
                             i === index
-                              ? { ...item, startTimeMs: position }
+                              ? {
+                                  ...item,
+                                  startTimeMs:
+                                    (position + offset) /
+                                    Math.max(0.001, timeScale),
+                                }
                               : item,
                           ),
                         )

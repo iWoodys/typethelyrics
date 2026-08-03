@@ -8,6 +8,114 @@ type SpotifyTrack = {
   album: { name: string; images: SpotifyImage[] };
 };
 
+export type LrclibCandidate = {
+  id: number;
+  trackName?: string | null;
+  artistName?: string | null;
+  albumName?: string | null;
+  duration: number;
+  plainLyrics: string | null;
+  syncedLyrics: string | null;
+  instrumental: boolean;
+};
+
+type LyricsMatch = {
+  candidate: LrclibCandidate;
+  confidence: "exact" | "high" | "medium";
+  durationDeltaMs: number;
+  suggestedTimeScale: number;
+};
+
+const EDITION_WORDS = new Set([
+  "acoustic",
+  "acustico",
+  "edit",
+  "extended",
+  "instrumental",
+  "live",
+  "remaster",
+  "remastered",
+  "remix",
+  "slowed",
+  "sped",
+  "version",
+]);
+
+const normalizeMetadata = (value?: string | null) =>
+  (value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const tokenSimilarity = (left: string, right: string) => {
+  const leftTokens = new Set(normalizeMetadata(left).split(" ").filter(Boolean));
+  const rightTokens = new Set(normalizeMetadata(right).split(" ").filter(Boolean));
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  const shared = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  return shared / new Set([...leftTokens, ...rightTokens]).size;
+};
+
+const editionMismatchCount = (left: string, right: string) => {
+  const leftTokens = new Set(normalizeMetadata(left).split(" "));
+  const rightTokens = new Set(normalizeMetadata(right).split(" "));
+  return [...EDITION_WORDS].filter(
+    (word) => leftTokens.has(word) !== rightTokens.has(word),
+  ).length;
+};
+
+export function selectBestLyricsCandidate(
+  candidates: LrclibCandidate[],
+  track: Pick<SpotifyTrack, "name" | "duration_ms" | "artists" | "album">,
+): LyricsMatch | null {
+  const synced = candidates.filter((candidate) => Boolean(candidate.syncedLyrics?.trim()));
+  if (!synced.length) return null;
+
+  const artist = track.artists.map((item) => item.name).join(", ");
+  const scored = synced.map((candidate) => {
+    const durationDeltaMs = Math.abs(candidate.duration * 1000 - track.duration_ms);
+    const titleExact = normalizeMetadata(candidate.trackName) === normalizeMetadata(track.name);
+    const artistExact = normalizeMetadata(candidate.artistName) === normalizeMetadata(artist);
+    const albumExact = normalizeMetadata(candidate.albumName) === normalizeMetadata(track.album.name);
+    const durationScore = Math.max(-80, 55 - durationDeltaMs / 100);
+    const score =
+      60 +
+      durationScore +
+      (titleExact ? 45 : tokenSimilarity(candidate.trackName || "", track.name) * 30) +
+      (artistExact ? 35 : tokenSimilarity(candidate.artistName || "", artist) * 25) +
+      (albumExact ? 15 : tokenSimilarity(candidate.albumName || "", track.album.name) * 8) -
+      editionMismatchCount(candidate.trackName || "", track.name) * 45;
+    return { candidate, score, durationDeltaMs, titleExact, artistExact };
+  });
+
+  scored.sort((left, right) => right.score - left.score);
+  const best = scored[0];
+  const ratio = track.duration_ms / Math.max(1, best.candidate.duration * 1000);
+  const safeScale =
+    best.titleExact &&
+    best.artistExact &&
+    best.durationDeltaMs >= 1_500 &&
+    best.durationDeltaMs <= 6_000 &&
+    ratio >= 0.985 &&
+    ratio <= 1.015
+      ? ratio
+      : 1;
+  const confidence =
+    best.titleExact && best.artistExact && best.durationDeltaMs <= 1_200
+      ? "exact"
+      : best.titleExact && best.artistExact && best.durationDeltaMs <= 6_000
+        ? "high"
+        : "medium";
+
+  return {
+    candidate: best.candidate,
+    confidence,
+    durationDeltaMs: Math.round(best.durationDeltaMs),
+    suggestedTimeScale: Math.round(safeScale * 1_000_000) / 1_000_000,
+  };
+}
+
 let cachedToken = '';
 let tokenExpiresAt = 0;
 
@@ -61,30 +169,44 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
     const track = await spotifyFetch<SpotifyTrack>(`/tracks/${encodeURIComponent(trackId)}`);
 
     const artist = track.artists.map(item => item.name).join(', ');
-    const params = new URLSearchParams({
+    const searchParams = new URLSearchParams({
       track_name: track.name,
       artist_name: artist,
-      album_name: track.album.name,
-      duration: Math.round(track.duration_ms / 1000).toString(),
     });
-    const response = await fetch(`https://lrclib.net/api/get?${params}`, {
-      headers: {
-        'Lrclib-Client': 'TypeTheLyrics/0.1.0 (https://github.com/iWoodys/typethelyrics)',
-      },
+    const headers = {
+      'Lrclib-Client': 'TypeTheLyrics/0.1.0 (https://github.com/iWoodys/typethelyrics)',
+    };
+    const searchResponse = await fetch(`https://lrclib.net/api/search?${searchParams}`, {
+      headers,
       next: { revalidate: 86400 },
     });
+    const candidates = searchResponse.ok
+      ? await searchResponse.json() as LrclibCandidate[]
+      : [];
+    let match = selectBestLyricsCandidate(candidates, track);
 
-    if (!response.ok) {
+    if (!match) {
+      const exactParams = new URLSearchParams({
+        track_name: track.name,
+        artist_name: artist,
+        album_name: track.album.name,
+        duration: Math.round(track.duration_ms / 1000).toString(),
+      });
+      const response = await fetch(`https://lrclib.net/api/get?${exactParams}`, {
+        headers,
+        next: { revalidate: 86400 },
+      });
+      if (response.ok) {
+        const exact = await response.json() as LrclibCandidate;
+        match = selectBestLyricsCandidate([exact], track);
+      }
+    }
+
+    if (!match) {
       throw new Error('No lyrics found');
     }
 
-    const data: {
-      id: number;
-      duration: number;
-      plainLyrics: string | null;
-      syncedLyrics: string | null;
-      instrumental: boolean;
-    } = await response.json();
+    const data = match.candidate;
     const trackDetails = {
       track_name: track.name,
       track_artist: artist,
@@ -115,6 +237,11 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
       trackDetails,
       syncedLyrics: syncedLines.map(line => ({ startTimeMs: line.timeMs, words: line.words })),
       lyricsSource: { provider: 'LRCLIB' as const, id: data.id, duration: data.duration },
+      syncAdjustment: {
+        confidence: match.confidence,
+        durationDeltaMs: match.durationDeltaMs,
+        suggestedTimeScale: match.suggestedTimeScale,
+      },
     };
   } catch (error) {
     console.error('Error getting lyrics:', error);

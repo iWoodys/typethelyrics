@@ -53,6 +53,7 @@ export async function POST(request: Request) {
       syncedLyrics,
       trackDetails: regularLyrics.trackDetails,
       lyricsSource: regularLyrics.lyricsSource,
+      syncAdjustment: regularLyrics.syncAdjustment,
     });
   } catch (error) {
     if (error instanceof Error && (error.message === 'BODY_TOO_LARGE' || error.message === 'INVALID_JSON')) {
