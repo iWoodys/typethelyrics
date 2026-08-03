@@ -1527,7 +1527,6 @@ export default function Home() {
                       <button
                         onClick={() => {
                           sendPlayer(playing ? "pause" : "play");
-                          setPlaying(!playing);
                         }}
                         className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3"
                       >

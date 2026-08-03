@@ -5,6 +5,7 @@ import {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
 } from "react";
 
 export type SpotifyPlaybackState = {
@@ -67,6 +68,7 @@ type SpotifyEmbedProps = {
 };
 
 let iframeApiPromise: Promise<SpotifyIframeApi> | null = null;
+const SPOTIFY_ORIGIN = "https://open.spotify.com";
 
 function loadIframeApi() {
   if (typeof window === "undefined")
@@ -118,7 +120,10 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
     ref,
   ) {
     const mountRef = useRef<HTMLDivElement>(null);
+    const iframeRef = useRef<HTMLIFrameElement>(null);
     const controllerRef = useRef<SpotifyEmbedController | null>(null);
+    const fallbackActiveRef = useRef(false);
+    const [useNativeFallback, setUseNativeFallback] = useState(false);
     const updateRef = useRef(onPlaybackUpdate);
     const startedRef = useRef(onPlaybackStarted);
     const readyRef = useRef(onReady);
@@ -137,11 +142,17 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
       () => ({
         command(command) {
           const controller = controllerRef.current;
-          if (!controller) return;
-          if (command === "play") controller.play();
-          else if (command === "resume") controller.resume();
-          else if (command === "pause") controller.pause();
-          else controller.restart();
+          if (controller) {
+            if (command === "play") controller.play();
+            else if (command === "resume") controller.resume();
+            else if (command === "pause") controller.pause();
+            else controller.restart();
+            return;
+          }
+          iframeRef.current?.contentWindow?.postMessage(
+            { command },
+            SPOTIFY_ORIGIN,
+          );
         },
         seek(seconds) {
           controllerRef.current?.seek(Math.max(0, Math.round(seconds)));
@@ -153,99 +164,158 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
     useEffect(() => {
       let cancelled = false;
       let timer: number | null = null;
+      let fallbackTimer: number | null = null;
       const mount = mountRef.current;
-      if (!mount) return;
 
+      fallbackActiveRef.current = useNativeFallback;
       sampleRef.current = null;
       displayedRef.current = 0;
       lastTickRef.current = performance.now();
 
-      void loadIframeApi()
-        .then((api) => {
-          if (cancelled || !mountRef.current) return;
-          api.createController(
-            mountRef.current,
-            {
-              uri: `spotify:track:${trackId}`,
-              width: "100%",
-              height,
-            },
-            (controller) => {
-              if (cancelled) {
-                controller.destroy();
-                return;
-              }
-              controllerRef.current = controller;
-              controller.addListener("ready", () => readyRef.current?.());
-              controller.addListener("playback_started", () =>
-                startedRef.current?.(),
-              );
-              controller.addListener("playback_update", (event) => {
-                if (!("data" in event)) return;
-                const state = event.data as SpotifyPlaybackState;
-                if (!Number.isFinite(state.position)) return;
-                const receivedAt = performance.now();
-                const previous = sampleRef.current;
-                sampleRef.current = { ...state, receivedAt };
-                if (
-                  !previous ||
-                  Math.abs(state.position - displayedRef.current) > 1_200 ||
-                  state.position + 500 < previous.position
-                ) {
-                  displayedRef.current = state.position;
-                }
-                updateRef.current?.({ ...state, position: displayedRef.current });
-              });
+      const acceptPlaybackUpdate = (state: SpotifyPlaybackState) => {
+        if (!Number.isFinite(state.position)) return;
+        const receivedAt = performance.now();
+        const previous = sampleRef.current;
+        sampleRef.current = {
+          ...state,
+          isPaused: Boolean(state.isPaused),
+          isBuffering: Boolean(state.isBuffering),
+          receivedAt,
+        };
+        if (
+          !previous ||
+          Math.abs(state.position - displayedRef.current) > 1_200 ||
+          state.position + 500 < previous.position
+        ) {
+          displayedRef.current = state.position;
+        }
+        updateRef.current?.({ ...state, position: displayedRef.current });
+      };
 
-              timer = window.setInterval(() => {
-                const sample = sampleRef.current;
-                if (!sample) return;
-                const now = performance.now();
-                const elapsed = Math.max(0, now - lastTickRef.current);
-                lastTickRef.current = now;
+      const activateFallback = () => {
+        if (cancelled || controllerRef.current || fallbackActiveRef.current)
+          return;
+        fallbackActiveRef.current = true;
+        setUseNativeFallback(true);
+      };
 
-                if (sample.isPaused || sample.isBuffering) {
-                  displayedRef.current = sample.position;
-                } else {
-                  const target = Math.min(
-                    sample.duration || Number.MAX_SAFE_INTEGER,
-                    sample.position + Math.max(0, now - sample.receivedAt),
-                  );
-                  const natural = displayedRef.current + elapsed;
-                  const correction = target - natural;
-                  displayedRef.current =
-                    Math.abs(correction) > 1_200
-                      ? target
-                      : natural + clamp(correction * 0.12, -18, 18);
-                }
+      const onMessage = (event: MessageEvent) => {
+        if (
+          event.origin !== SPOTIFY_ORIGIN ||
+          event.source !== iframeRef.current?.contentWindow
+        )
+          return;
+        if (event.data?.type === "playback_started") {
+          startedRef.current?.();
+          return;
+        }
+        if (event.data?.type !== "playback_update") return;
+        const payload = event.data?.payload as SpotifyPlaybackState | undefined;
+        if (!payload || !Number.isFinite(payload.position)) return;
+        acceptPlaybackUpdate(payload);
+      };
+      window.addEventListener("message", onMessage);
 
-                updateRef.current?.({
-                  ...sample,
-                  position: Math.max(0, displayedRef.current),
-                });
-              }, 100);
-            },
+      timer = window.setInterval(() => {
+        const sample = sampleRef.current;
+        if (!sample) return;
+        const now = performance.now();
+        const elapsed = Math.max(0, now - lastTickRef.current);
+        lastTickRef.current = now;
+
+        if (sample.isPaused || sample.isBuffering) {
+          displayedRef.current = sample.position;
+        } else {
+          const target = Math.min(
+            sample.duration || Number.MAX_SAFE_INTEGER,
+            sample.position + Math.max(0, now - sample.receivedAt),
           );
-        })
-        .catch(() => {
-          // El iframe queda vacío y la interfaz principal muestra el estado pausado.
+          const natural = displayedRef.current + elapsed;
+          const correction = target - natural;
+          displayedRef.current =
+            Math.abs(correction) > 1_200
+              ? target
+              : natural + clamp(correction * 0.12, -18, 18);
+        }
+
+        updateRef.current?.({
+          ...sample,
+          position: Math.max(0, displayedRef.current),
         });
+      }, 100);
+
+      // Algunos navegadores o bloqueadores cargan el script de Spotify pero no
+      // entregan su controlador. En ese caso volvemos al iframe clásico, que
+      // mantiene el audio y los eventos de reproducción funcionando.
+      if (!useNativeFallback && mount) {
+        fallbackTimer = window.setTimeout(activateFallback, 800);
+
+        void loadIframeApi()
+          .then((api) => {
+            if (cancelled || !mountRef.current) return;
+            api.createController(
+              mountRef.current,
+              {
+                uri: `spotify:track:${trackId}`,
+                width: "100%",
+                height,
+              },
+              (controller) => {
+                if (cancelled) {
+                  controller.destroy();
+                  return;
+                }
+                if (fallbackActiveRef.current) {
+                  controller.destroy();
+                  return;
+                }
+                if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+                controllerRef.current = controller;
+                controller.addListener("ready", () => readyRef.current?.());
+                controller.addListener("playback_started", () =>
+                  startedRef.current?.(),
+                );
+                controller.addListener("playback_update", (event) => {
+                  if (!("data" in event)) return;
+                  acceptPlaybackUpdate(event.data as SpotifyPlaybackState);
+                });
+              },
+            );
+          })
+          .catch(activateFallback);
+      }
 
       return () => {
         cancelled = true;
         if (timer !== null) window.clearInterval(timer);
+        if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+        window.removeEventListener("message", onMessage);
         controllerRef.current?.destroy();
         controllerRef.current = null;
-        mount.replaceChildren();
+        if (mount?.isConnected) mount.replaceChildren();
       };
-    }, [height, trackId]);
+    }, [height, trackId, useNativeFallback]);
 
     return (
       <div
         className={`overflow-hidden rounded-xl ${className}`}
         style={{ minHeight: height }}
       >
-        <div ref={mountRef} />
+        {useNativeFallback ? (
+          <iframe
+            ref={iframeRef}
+            title="Spotify"
+            src={`https://open.spotify.com/embed/track/${trackId}?theme=0`}
+            width="100%"
+            height={height}
+            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+            loading="eager"
+            onLoad={() => readyRef.current?.()}
+            className="block border-0"
+          />
+        ) : (
+          <div ref={mountRef} />
+        )}
       </div>
     );
   },
