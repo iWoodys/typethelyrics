@@ -68,7 +68,17 @@ import {
 import { supabase } from "@/lib/supabase";
 import { validateSyncedLyrics } from "@/lib/lyrics";
 import { readStoredJson, writeStoredJson } from "@/lib/safe-storage";
-import { lyricClockFromPlayback, scaleLyricsToPlayback } from "@/lib/synchronization";
+import {
+  deviceOffsetFromFirstVoice,
+  lyricClockFromPlayback,
+  normalizeDeviceOffset,
+  scaleLyricsToPlayback,
+} from "@/lib/synchronization";
+import {
+  completedLineStatus,
+  countPositionalMatches,
+  isAppendOnlyInput,
+} from "@/lib/typing";
 
 type SongCard = {
   id: string;
@@ -157,7 +167,7 @@ const GUIDE_STEPS = [
   { title: "1. Elegí una canción", text: "Buscala por nombre o pegá un enlace de una canción de Spotify. Para playlists, conectá Spotify: desde 2026 sólo se permiten playlists propias o colaborativas." },
   { title: "2. Iniciá la reproducción", text: "Pulsá Play dentro de Spotify y después Iniciar partida. Si la canción tiene una introducción larga, la escritura permanecerá bloqueada hasta que realmente empiece la primera voz." },
   { title: "3. Escribí cuando se ilumine", text: "Cuando aparezca «Escribí ahora», usá el teclado directamente. Entre versos el juego espera; si Spotify está pausado, la pantalla te lo indicará." },
-  { title: "4. Calibrá sólo si hace falta", text: "Pulsá «Calibrar canción» para descartar ajustes locales, buscar la edición de LRCLIB que mejor coincida por artista, versión y duración, y aplicar una corrección temporal segura." },
+  { title: "4. Corregí la sincronización", text: "Si falla una sola canción, usá «Calibrar canción». Si todas se escuchan adelantadas o atrasadas en tu equipo, usá «Sincronizar mi dispositivo» una vez y el ajuste también se aplicará al multijugador." },
 ];
 
 export default function Home() {
@@ -180,9 +190,9 @@ export default function Home() {
   const [lineIndex, setLineIndex] = useState(0);
   const [typed, setTyped] = useState("");
   const [typedLineIndex, setTypedLineIndex] = useState(0);
-  const [lineFeedback, setLineFeedback] = useState<"correct" | "missed" | null>(
-    null,
-  );
+  const [lineFeedback, setLineFeedback] = useState<
+    "correct" | "partial" | "missed" | null
+  >(null);
   const [started, setStarted] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [buffering, setBuffering] = useState(false);
@@ -217,6 +227,10 @@ export default function Home() {
   const [fontScale, setFontScale] = useState(1);
   const [highContrast, setHighContrast] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const [deviceOffsetMs, setDeviceOffsetMs] = useState(0);
+  const [deviceCalibrationOpen, setDeviceCalibrationOpen] = useState(false);
+  const [deviceCalibrationMessage, setDeviceCalibrationMessage] = useState("");
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [publicEdit, setPublicEdit] = useState(false);
   const [playlistUrl, setPlaylistUrl] = useState("");
   const [playlistTracks, setPlaylistTracks] = useState<SongCard[]>([]);
@@ -255,11 +269,13 @@ export default function Home() {
       fontScale: 1,
       highContrast: false,
       reducedMotion: false,
-      offset: 0,
+      deviceOffsetMs: 0,
     });
     setFontScale(saved.fontScale);
     setHighContrast(saved.highContrast);
     setReducedMotion(saved.reducedMotion);
+    setDeviceOffsetMs(normalizeDeviceOffset(saved.deviceOffsetMs || 0));
+    setSettingsLoaded(true);
     if (!localStorage.getItem(LS.guide)) setGuideOpen(true);
     const calibrationReload = sessionStorage.getItem(LS.calibrationReload);
     if (calibrationReload) {
@@ -334,11 +350,17 @@ export default function Home() {
     localStorage.setItem(LS.stats, JSON.stringify(stats));
   }, [stats]);
   useEffect(() => {
+    if (!settingsLoaded) return;
     localStorage.setItem(
       LS.settings,
-      JSON.stringify({ fontScale, highContrast, reducedMotion }),
+      JSON.stringify({
+        fontScale,
+        highContrast,
+        reducedMotion,
+        deviceOffsetMs,
+      }),
     );
-  }, [fontScale, highContrast, reducedMotion]);
+  }, [deviceOffsetMs, fontScale, highContrast, reducedMotion, settingsLoaded]);
   useEffect(() => {
     if (!trackId) return;
     const offsets = JSON.parse(localStorage.getItem(LS.offsets) || "{}") as Record<string, number>;
@@ -368,7 +390,11 @@ export default function Home() {
     [],
   );
 
-  const effectivePosition = lyricClockFromPlayback(position, offset, timeScale);
+  const effectivePosition = lyricClockFromPlayback(
+    position,
+    offset + deviceOffsetMs,
+    timeScale,
+  );
   const timedIndex = useMemo(() => {
     let found = 0;
     lyrics.forEach((line, index) => {
@@ -397,7 +423,11 @@ export default function Home() {
     noPunctuation,
   );
   const lineWaitMs = current
-    ? Math.max(0, current.startTimeMs * timeScale - (position + offset))
+    ? Math.max(
+        0,
+        current.startTimeMs * timeScale -
+          (position + offset + deviceOffsetMs),
+      )
     : 0;
   const singerStarted = !!current && effectivePosition >= current.startTimeMs;
   const canType =
@@ -409,11 +439,14 @@ export default function Home() {
   useEffect(() => {
     if (canType) inputRef.current?.focus();
   }, [canType, lineIndex]);
-  const showLineFeedback = useCallback((type: "correct" | "missed") => {
+  const showLineFeedback = useCallback(
+    (type: "correct" | "partial" | "missed") => {
     setLineFeedback(type);
     if (feedbackTimer.current) window.clearTimeout(feedbackTimer.current);
     feedbackTimer.current = window.setTimeout(() => setLineFeedback(null), 700);
-  }, []);
+    },
+    [],
+  );
   const addLineResults = useCallback((items: LineResult[]) => {
     lineResultsRef.current = [...lineResultsRef.current, ...items];
   }, []);
@@ -588,7 +621,7 @@ export default function Home() {
         (value) =>
           value + incomplete.reduce((sum, item) => sum + item.points, 0),
       );
-      showLineFeedback("missed");
+      showLineFeedback(normalizedTyped ? "partial" : "missed");
       setMistakes((value) => value + missed);
       setCombo(0);
       setTyped("");
@@ -741,6 +774,7 @@ export default function Home() {
 
   const handleTyping = (value: string) => {
     if (!canType || !current) return;
+    if (!isAppendOnlyInput(visibleTyped, value)) return;
     const nextTyped = normalizeText(
       value,
       mode === "expert",
@@ -763,20 +797,26 @@ export default function Home() {
           setLives((currentLives) => Math.max(0, currentLives - addedMistakes));
       }
     }
+    const totalLineErrors = currentLineErrors + addedMistakes;
     lastTypedLength.current = nextTyped.length;
     setTypedLineIndex(lineIndex);
     setTyped(value);
-    if (nextTyped === target) {
-      const nextCombo = combo + 1;
+    if (nextTyped.length >= target.length) {
+      const completion = completedLineStatus(nextTyped, target);
+      const isCorrect = completion === "perfect";
+      const nextCombo = isCorrect ? combo + 1 : 0;
       const multiplier = Math.min(4, 1 + Math.floor(nextCombo / 5));
       const deadline =
         lyrics[lineIndex + 1]?.startTimeMs || current.startTimeMs + 6000;
-      const timingBonus = effectivePosition <= deadline ? 300 : 0;
+      const timingBonus = isCorrect && effectivePosition <= deadline ? 300 : 0;
       const status: LineResult["status"] =
-        currentLineErrors === 0 ? "perfect" : "corrected";
-      const base =
-        status === "perfect" ? target.length * 15 : target.length * 10;
-      const points = base * multiplier + timingBonus;
+        isCorrect && totalLineErrors > 0 ? "corrected" : completion;
+      const matching = countPositionalMatches(nextTyped, target);
+      const points = isCorrect
+        ? (status === "perfect" ? target.length * 15 : target.length * 10) *
+            multiplier +
+          timingBonus
+        : matching * 6;
       addLineResults([
         {
           index: lineIndex,
@@ -784,13 +824,13 @@ export default function Home() {
           typed: nextTyped,
           status,
           points,
-          errors: currentLineErrors,
+          errors: totalLineErrors,
         },
       ]);
-      showLineFeedback("correct");
+      showLineFeedback(isCorrect ? "correct" : "partial");
       setScore((value) => value + points);
       setCombo(nextCombo);
-      setMaxCombo((value) => Math.max(value, nextCombo));
+      if (isCorrect) setMaxCombo((value) => Math.max(value, nextCombo));
       setTyped("");
       setCurrentLineErrors(0);
       lastTypedLength.current = 0;
@@ -1071,6 +1111,47 @@ export default function Home() {
   const resetLatency = () => {
     setOffset(0);
     setTimeScale(1);
+  };
+
+  const beginDeviceCalibration = () => {
+    if (!trackId || !lyrics.length) return;
+    resetGame();
+    setDeviceCalibrationMessage("");
+    setDeviceCalibrationOpen(true);
+    sendPlayer("restart");
+  };
+
+  const restartDeviceCalibration = () => {
+    setDeviceCalibrationMessage("");
+    sendPlayer("restart");
+    window.setTimeout(() => sendPlayer("play"), 120);
+  };
+
+  const captureDeviceCalibration = () => {
+    if (!lyrics.length || position < 250) {
+      setDeviceCalibrationMessage(
+        "Primero reproducí la canción y esperá a escuchar la primera voz.",
+      );
+      return;
+    }
+    const correction = deviceOffsetFromFirstVoice(
+      lyrics[0].startTimeMs,
+      position + offset,
+      timeScale,
+    );
+    setDeviceOffsetMs(correction);
+    setDeviceCalibrationOpen(false);
+    setDeviceCalibrationMessage("");
+    setSyncMessage(
+      "Sincronización de este navegador guardada. Se aplicará a todas las canciones y al multijugador.",
+    );
+    resetGame();
+  };
+
+  const resetDeviceCalibration = () => {
+    setDeviceOffsetMs(0);
+    setDeviceCalibrationMessage("");
+    setSyncMessage("Se eliminó el ajuste de sincronización de este navegador.");
   };
   const importPlaylist = async (event: FormEvent) => {
     event.preventDefault();
@@ -1416,18 +1497,29 @@ export default function Home() {
 
                   <div
                     onClick={() => inputRef.current?.focus()}
-                    className={`relative min-h-[330px] cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] p-6 transition-all duration-200 sm:p-10 ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
+                    className={`relative min-h-[330px] cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] p-6 transition-all duration-200 sm:p-10 ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
                   >
                     {lineFeedback && (
                       <div
-                        className={`absolute left-4 top-4 rounded-full px-4 py-2 text-xs font-black uppercase tracking-wider ${lineFeedback === "correct" ? "bg-emerald-400 text-emerald-950" : "bg-red-400 text-red-950"}`}
+                        className={`absolute left-4 top-4 rounded-full px-4 py-2 text-xs font-black uppercase tracking-wider ${lineFeedback === "correct" ? "bg-emerald-400 text-emerald-950" : lineFeedback === "partial" ? "bg-amber-400 text-amber-950" : "bg-red-400 text-red-950"}`}
                       >
                         {lineFeedback === "correct"
                           ? "✓ Frase correcta"
-                          : "✕ Frase incompleta"}
+                          : lineFeedback === "partial"
+                            ? "~ Frase parcial"
+                            : "✕ Frase incompleta"}
                       </div>
                     )}
-                    <div className="absolute right-4 top-4 z-10">
+                    <div className="absolute right-4 top-4 z-10 flex flex-wrap justify-end gap-2">
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          beginDeviceCalibration();
+                        }}
+                        className="flex items-center gap-2 rounded-lg bg-violet-400/15 px-3 py-2 text-xs font-bold text-violet-200"
+                      >
+                        <Clock3 size={14} /> Sincronizar mi dispositivo
+                      </button>
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
@@ -1438,7 +1530,57 @@ export default function Home() {
                         <Gauge size={14} /> Calibrar canción
                       </button>
                     </div>
-                    <div className="mt-12 text-center">
+                    {deviceCalibrationOpen && (
+                      <div className="mt-14 rounded-2xl border border-violet-400/30 bg-violet-400/10 p-4 text-left">
+                        <b className="text-violet-200">
+                          Sincronización para este navegador
+                        </b>
+                        <p className="mt-2 text-sm text-zinc-300">
+                          Reiniciá el audio y, apenas escuches la primera voz,
+                          presioná “La voz empezó ahora”. Este ajuste se hará
+                          una sola vez y se aplicará a todas las canciones.
+                        </p>
+                        <p className="mt-2 text-sm italic text-zinc-400">
+                          Primera frase: “{lyrics[0]?.words}”
+                        </p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              restartDeviceCalibration();
+                            }}
+                            className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold"
+                          >
+                            1. Reiniciar audio
+                          </button>
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              captureDeviceCalibration();
+                            }}
+                            className="rounded-lg bg-violet-400 px-4 py-2 text-sm font-black text-violet-950"
+                          >
+                            2. La voz empezó ahora
+                          </button>
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDeviceCalibrationOpen(false);
+                              setDeviceCalibrationMessage("");
+                            }}
+                            className="px-3 py-2 text-sm text-zinc-400"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                        {deviceCalibrationMessage && (
+                          <p className="mt-3 text-sm text-amber-200">
+                            {deviceCalibrationMessage}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    <div className={deviceCalibrationOpen ? "mt-6 text-center" : "mt-12 text-center"}>
                       <p
                         className={`mb-6 text-sm uppercase tracking-[.3em] ${canType ? "text-cyan-300" : "text-zinc-600"}`}
                       >
@@ -1515,6 +1657,12 @@ export default function Home() {
                       onPaste={(event) => event.preventDefault()}
                       onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
                         if (e.key === "Escape") sendPlayer("pause");
+                        if (
+                          ["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Home"].includes(
+                            e.key,
+                          )
+                        )
+                          e.preventDefault();
                       }}
                       disabled={!canType}
                       className="pointer-events-none absolute inset-0 opacity-0"
@@ -2133,7 +2281,7 @@ export default function Home() {
           <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#11121a] p-6">
             <div className="flex items-center justify-between">
               <h2 className="flex items-center gap-2 text-xl font-bold">
-                <Accessibility /> Accesibilidad
+                <Accessibility /> Configuración
               </h2>
               <button onClick={() => setSettingsOpen(false)}>
                 <X />
@@ -2167,6 +2315,24 @@ export default function Home() {
                 onChange={(e) => setReducedMotion(e.target.checked)}
               />
             </label>
+            <div className="mt-5 rounded-xl border border-violet-400/20 bg-violet-400/10 p-4">
+              <b className="text-sm text-violet-200">
+                Sincronización del dispositivo
+              </b>
+              <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+                {deviceOffsetMs === 0
+                  ? "Sin ajuste personal. Si todas las canciones se escuchan adelantadas o atrasadas, calibralo desde una canción."
+                  : "Hay un ajuste personal activo para este navegador y también se usa en multijugador."}
+              </p>
+              {deviceOffsetMs !== 0 && (
+                <button
+                  onClick={resetDeviceCalibration}
+                  className="mt-3 rounded-lg border border-violet-300/20 px-3 py-2 text-xs font-bold text-violet-200"
+                >
+                  Restablecer sincronización del dispositivo
+                </button>
+              )}
+            </div>
             <button
               onClick={() => {
                 Object.values(LS).forEach((key) => {

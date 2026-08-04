@@ -37,7 +37,16 @@ import {
   rankFor,
 } from "@/lib/game";
 import type { LyricsResponse, SyncedLyric } from "@/components/types";
-import { scaleLyricsToPlayback } from "@/lib/synchronization";
+import { readStoredJson } from "@/lib/safe-storage";
+import {
+  normalizeDeviceOffset,
+  scaleLyricsToPlayback,
+} from "@/lib/synchronization";
+import {
+  completedLineStatus,
+  countPositionalMatches,
+  isAppendOnlyInput,
+} from "@/lib/typing";
 import {
   SpotifyEmbed,
   type SpotifyEmbedCommand,
@@ -159,9 +168,9 @@ export default function MultiplayerPage() {
   const [typed, setTyped] = useState("");
   const [typedLineIndex, setTypedLineIndex] = useState(0);
   const [lineIndex, setLineIndex] = useState(0);
-  const [lineFeedback, setLineFeedback] = useState<"correct" | "missed" | null>(
-    null,
-  );
+  const [lineFeedback, setLineFeedback] = useState<
+    "correct" | "partial" | "missed" | null
+  >(null);
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
@@ -171,6 +180,7 @@ export default function MultiplayerPage() {
   const [startedAt, setStartedAt] = useState(0);
   const [clock, setClock] = useState(Date.now());
   const [serverClockOffset, setServerClockOffset] = useState(0);
+  const [deviceOffsetMs, setDeviceOffsetMs] = useState(0);
   const [localFinished, setLocalFinished] = useState(false);
   const [allLinesComplete, setAllLinesComplete] = useState(false);
   const spotifyRef = useRef<SpotifyEmbedHandle>(null);
@@ -223,6 +233,14 @@ export default function MultiplayerPage() {
     const timer = window.setInterval(() => void synchronizeServerClock(), 60_000);
     return () => window.clearInterval(timer);
   }, [synchronizeServerClock]);
+
+  useEffect(() => {
+    const settings = readStoredJson<{ deviceOffsetMs?: number }>(
+      "ttl-settings-v2",
+      {},
+    );
+    setDeviceOffsetMs(normalizeDeviceOffset(settings.deviceOffsetMs || 0));
+  }, []);
 
   const loadMessages = useCallback(async (roomId: string) => {
     const { data, error: messagesError } = await supabase
@@ -749,14 +767,14 @@ export default function MultiplayerPage() {
   const wallPosition = startedAt ? Math.max(0, roomClock - startedAt) : 0;
   // El reloj compartido manda: una pausa o reinicio local de Spotify nunca puede
   // atrasar las letras ni extender la partida para un solo jugador.
-  const gamePosition = wallPosition;
+  const gamePosition = Math.max(0, wallPosition + deviceOffsetMs);
   const estimatedPlaybackPosition = playbackPosition === null
     ? null
     : playbackPosition + (playbackPaused ? 0 : Math.max(0, clock - playbackUpdatedAt));
   const playbackDrift = estimatedPlaybackPosition === null
     ? null
-    : estimatedPlaybackPosition - gamePosition;
-  const synchronized = playbackDrift === null || gamePosition < 5_000 || Math.abs(playbackDrift) <= 1_500;
+    : estimatedPlaybackPosition - wallPosition;
+  const synchronized = playbackDrift === null || wallPosition < 5_000 || Math.abs(playbackDrift) <= 1_500;
 
   useEffect(() => {
     if (
@@ -765,20 +783,20 @@ export default function MultiplayerPage() {
       playbackDrift === null ||
       playbackPaused ||
       playbackBuffering ||
-      gamePosition < 5_000 ||
+      wallPosition < 5_000 ||
       Math.abs(playbackDrift) <= 1_500 ||
       Date.now() - lastAudioResyncRef.current < 5_000
     )
       return;
     lastAudioResyncRef.current = Date.now();
-    spotifyRef.current?.seek(gamePosition / 1000);
+    spotifyRef.current?.seek(wallPosition / 1000);
   }, [
-    gamePosition,
     localFinished,
     playbackBuffering,
     playbackDrift,
     playbackPaused,
     startedAt,
+    wallPosition,
   ]);
   const lyrics = useMemo(() => lobby?.lyrics || [], [lobby?.lyrics]);
   const gameMode: GameMode = lobby?.game_mode || "rhythm";
@@ -827,11 +845,17 @@ export default function MultiplayerPage() {
     );
     return Math.floor(ratio * currentLine.words.split(/\s+/).length);
   }, [currentLine, gamePosition, lineIndex, lyrics]);
-  const showLineFeedback = useCallback((type: "correct" | "missed") => {
-    setLineFeedback(type);
-    if (feedbackTimer.current) window.clearTimeout(feedbackTimer.current);
-    feedbackTimer.current = window.setTimeout(() => setLineFeedback(null), 700);
-  }, []);
+  const showLineFeedback = useCallback(
+    (type: "correct" | "partial" | "missed") => {
+      setLineFeedback(type);
+      if (feedbackTimer.current) window.clearTimeout(feedbackTimer.current);
+      feedbackTimer.current = window.setTimeout(
+        () => setLineFeedback(null),
+        700,
+      );
+    },
+    [],
+  );
   useEffect(() => {
     if (canType) inputRef.current?.focus();
   }, [canType, lineIndex]);
@@ -852,7 +876,7 @@ export default function MultiplayerPage() {
     setTyped("");
     setTypedLineIndex(timedIndex);
     setLineIndex(timedIndex);
-    showLineFeedback("missed");
+    showLineFeedback(normalizedTyped ? "partial" : "missed");
     lastTypedLength.current = 0;
     lastLineRef.current = timedIndex;
     if (gameMode === "survival")
@@ -861,6 +885,7 @@ export default function MultiplayerPage() {
     gameMode,
     lineIndex,
     localFinished,
+    normalizedTyped,
     showLineFeedback,
     startedAt,
     timedIndex,
@@ -968,13 +993,14 @@ export default function MultiplayerPage() {
     if (
       startedAt &&
       lobby?.duration_ms &&
-      gamePosition >= lobby.duration_ms - 100
+      wallPosition >= lobby.duration_ms - 100
     )
       void finish(undefined, false);
-  }, [finish, gamePosition, lobby?.duration_ms, startedAt]);
+  }, [finish, lobby?.duration_ms, startedAt, wallPosition]);
 
   const typeLine = (value: string) => {
     if (!canType || !currentLine) return;
+    if (!isAppendOnlyInput(visibleTyped, value)) return;
     const normalized = normalizeText(value, gameMode === "expert", true, false);
     let addedCorrect = 0;
     let addedMistakes = 0;
@@ -994,13 +1020,18 @@ export default function MultiplayerPage() {
     lastTypedLength.current = normalized.length;
     setTypedLineIndex(lineIndex);
     setTyped(value);
-    if (normalized === target) {
-      const nextCombo = combo + 1;
+    if (normalized.length >= target.length) {
+      const completion = completedLineStatus(normalized, target);
+      const isCorrect = completion === "perfect";
+      const nextCombo = isCorrect ? combo + 1 : 0;
       setCombo(nextCombo);
-      setMaxCombo((old) => Math.max(old, nextCombo));
-      const linePoints = target.length * 10 + 300 + Math.min(900, nextCombo * 30);
+      if (isCorrect) setMaxCombo((old) => Math.max(old, nextCombo));
+      const matching = countPositionalMatches(normalized, target);
+      const linePoints = isCorrect
+        ? target.length * 10 + 300 + Math.min(900, nextCombo * 30)
+        : matching * 6;
       setScore((old) => old + linePoints);
-      showLineFeedback("correct");
+      showLineFeedback(isCorrect ? "correct" : "partial");
       setTyped("");
       lastTypedLength.current = 0;
       lastLineRef.current = lineIndex + 1;
@@ -1396,15 +1427,17 @@ export default function MultiplayerPage() {
                     )}
                     <div
                       onClick={() => inputRef.current?.focus()}
-                      className={`relative min-h-[330px] cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] p-6 text-center transition-all duration-200 sm:p-10 ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
+                      className={`relative min-h-[330px] cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] p-6 text-center transition-all duration-200 sm:p-10 ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
                     >
                       {lineFeedback && (
                         <div
-                          className={`absolute left-4 top-4 rounded-full px-4 py-2 text-xs font-black uppercase tracking-wider ${lineFeedback === "correct" ? "bg-emerald-400 text-emerald-950" : "bg-red-400 text-red-950"}`}
+                          className={`absolute left-4 top-4 rounded-full px-4 py-2 text-xs font-black uppercase tracking-wider ${lineFeedback === "correct" ? "bg-emerald-400 text-emerald-950" : lineFeedback === "partial" ? "bg-amber-400 text-amber-950" : "bg-red-400 text-red-950"}`}
                         >
                           {lineFeedback === "correct"
                             ? "✓ Frase correcta"
-                            : "✕ Frase incompleta"}
+                            : lineFeedback === "partial"
+                              ? "~ Frase parcial"
+                              : "✕ Frase incompleta"}
                         </div>
                       )}
                       <p
@@ -1473,6 +1506,14 @@ export default function MultiplayerPage() {
                         value={visibleTyped}
                         onChange={(event) => typeLine(event.target.value)}
                         onPaste={(event) => event.preventDefault()}
+                        onKeyDown={(event) => {
+                          if (
+                            ["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Home"].includes(
+                              event.key,
+                            )
+                          )
+                            event.preventDefault();
+                        }}
                         disabled={!canType}
                         className="absolute inset-0 opacity-0"
                         autoComplete="off"

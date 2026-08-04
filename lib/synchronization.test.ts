@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  deviceOffsetFromFirstVoice,
   lyricClockFromPlayback,
+  normalizeDeviceOffset,
   normalizeTimeScale,
   scaleLyricsToPlayback,
 } from "./synchronization";
@@ -20,5 +22,11 @@ describe("synchronization", () => {
     expect(
       scaleLyricsToPlayback([{ startTimeMs: 10_000, words: "Hola" }], 1.01),
     ).toEqual([{ startTimeMs: 10_100, words: "Hola" }]);
+  });
+
+  it("calibra una sola vez la latencia de este dispositivo", () => {
+    expect(deviceOffsetFromFirstVoice(10_000, 10_650, 1)).toBe(-650);
+    expect(deviceOffsetFromFirstVoice(10_000, 9_700, 1)).toBe(300);
+    expect(normalizeDeviceOffset(50_000)).toBe(5_000);
   });
 });
