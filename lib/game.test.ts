@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { multiplayerLinePolicy, MULTIPLAYER_GAME_MODE_DETAILS, normalizeText, rankFor } from "./game";
+import {
+  GAME_MODES,
+  multiplayerLinePolicy,
+  MULTIPLAYER_GAME_MODE_DETAILS,
+  normalizeGameMode,
+  normalizeText,
+  rankFor,
+} from "./game";
 
 describe("normalizeText",()=>{
   it("conserva signos para que el teclado pueda evaluarlos",()=>expect(normalizeText("Hola, ¿qué tal?",false,true,false)).toBe("hola, ¿qué tal?"));
@@ -12,17 +19,27 @@ describe("rankFor",()=>{
 });
 
 describe("multiplayerLinePolicy", () => {
-  it("hace avanzar Relajado con el reloj sin penalizar", () => {
+  it("ofrece únicamente Fácil, Normal y Difícil", () => {
+    expect(GAME_MODES).toEqual(["relaxed", "rhythm", "expert"]);
+    expect(GAME_MODES.map((mode) => MULTIPLAYER_GAME_MODE_DETAILS[mode].name)).toEqual([
+      "Fácil",
+      "Normal",
+      "Difícil",
+    ]);
+  });
+
+  it("hace avanzar Fácil con el reloj sin penalizar", () => {
     expect(multiplayerLinePolicy("relaxed")).toEqual({ advanceWithClock: true, penalizeMissed: false });
     expect(MULTIPLAYER_GAME_MODE_DETAILS.relaxed.description).not.toContain("pausa");
   });
 
-  it("mantiene las penalizaciones de Ritmo y Experto", () => {
+  it("mantiene las penalizaciones de Normal y Difícil", () => {
     expect(multiplayerLinePolicy("rhythm").penalizeMissed).toBe(true);
     expect(multiplayerLinePolicy("expert").penalizeMissed).toBe(true);
   });
 
-  it("no fuerza el avance en Práctica", () => {
-    expect(multiplayerLinePolicy("practice")).toEqual({ advanceWithClock: false, penalizeMissed: false });
+  it("convierte modos inválidos a Normal", () => {
+    expect(normalizeGameMode("removed-mode")).toBe("rhythm");
+    expect(normalizeGameMode("expert")).toBe("expert");
   });
 });

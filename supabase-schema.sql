@@ -54,7 +54,7 @@ create table if not exists public.game_results (
   track_title text not null default 'Canción',
   track_artist text not null default '',
   image_url text,
-  mode text not null check (mode in ('relaxed', 'rhythm', 'expert', 'practice', 'survival')),
+  mode text not null check (mode in ('relaxed', 'rhythm', 'expert')),
   score integer not null default 0,
   wpm integer not null default 0,
   accuracy numeric(5,2) not null default 0,
@@ -172,7 +172,7 @@ create table if not exists public.lobbies (
   code text not null unique check (code ~ '^[A-Z0-9]{6}$'),
   host_id uuid not null references public.users(id) on delete cascade,
   status text not null default 'waiting' check (status in ('waiting', 'countdown', 'playing', 'finished')),
-  game_mode text not null default 'rhythm' check (game_mode in ('relaxed', 'rhythm', 'expert', 'practice', 'survival')),
+  game_mode text not null default 'rhythm' check (game_mode in ('relaxed', 'rhythm', 'expert')),
   spotify_track_id text, track_url text, track_title text, track_artist text, image_url text,
   duration_ms integer, lyrics jsonb not null default '[]'::jsonb, start_at timestamptz,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now()
@@ -244,7 +244,7 @@ returns void language plpgsql security definer set search_path = public as $$
 begin
   update public.lobbies set spotify_track_id = new_track_id, track_url = new_track_url, track_title = new_title,
     track_artist = new_artist, image_url = new_image, duration_ms = new_duration, lyrics = new_lyrics,
-    game_mode = case when new_mode in ('relaxed', 'rhythm', 'expert', 'practice', 'survival') then new_mode else 'rhythm' end,
+    game_mode = case when new_mode in ('relaxed', 'rhythm', 'expert') then new_mode else 'rhythm' end,
     updated_at = now()
   where id = target_lobby and host_id = auth.uid() and status = 'waiting';
   if not found then raise exception 'Solo el anfitrión puede elegir la canción.'; end if;
@@ -255,7 +255,7 @@ end; $$;
 create or replace function public.set_lobby_mode(target_lobby uuid, new_mode text)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  if new_mode not in ('relaxed', 'rhythm', 'expert', 'practice', 'survival') then
+  if new_mode not in ('relaxed', 'rhythm', 'expert') then
     raise exception 'Modo de juego inválido.';
   end if;
   update public.lobbies set game_mode = new_mode, updated_at = now()
@@ -411,7 +411,7 @@ declare result_id uuid; computed_rank text;
 begin
   if auth.uid() is null then raise exception 'Tenés que iniciar sesión.'; end if;
   if target_track_id !~ '^[A-Za-z0-9]{10,30}$'
-    or target_mode not in ('relaxed', 'rhythm', 'expert', 'practice', 'survival')
+    or target_mode not in ('relaxed', 'rhythm', 'expert')
     or target_score not between 0 and 1000000
     or target_wpm not between 0 and 400
     or target_accuracy not between 0 and 100

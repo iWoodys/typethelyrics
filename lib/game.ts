@@ -1,28 +1,26 @@
 import type { SyncedLyric } from "@/components/types";
 
-export type GameMode =
-  "relaxed" | "rhythm" | "expert" | "practice" | "survival";
+export const GAME_MODES = ["relaxed", "rhythm", "expert"] as const;
+export type GameMode = (typeof GAME_MODES)[number];
+
+export const normalizeGameMode = (value: unknown): GameMode =>
+  GAME_MODES.includes(value as GameMode) ? (value as GameMode) : "rhythm";
 
 export const MODE_INFO: Record<
   GameMode,
   { name: string; description: string }
 > = {
   relaxed: {
-    name: "Relajado",
-    description: "La canción se pausa si quedás muy atrás.",
+    name: "Fácil",
+    description: "La canción espera si quedás muy atrás.",
   },
-  rhythm: { name: "Ritmo", description: "Los versos avanzan con la música." },
+  rhythm: {
+    name: "Normal",
+    description: "Los versos avanzan con la música.",
+  },
   expert: {
-    name: "Experto",
+    name: "Difícil",
     description: "Mayúsculas, tildes y signos obligatorios.",
-  },
-  practice: {
-    name: "Práctica",
-    description: "Repetí una sección sin perder vidas.",
-  },
-  survival: {
-    name: "Supervivencia",
-    description: "Tres errores y termina la partida.",
   },
 };
 
@@ -31,7 +29,7 @@ export const GAME_MODE_DETAILS: Record<
   { name: string; description: string; rules: string[] }
 > = {
   relaxed: {
-    name: "Relajado",
+    name: "Fácil",
     description: "Aprendé la letra sin que la música te deje atrás.",
     rules: [
       "La canción se pausa si no terminaste el verso.",
@@ -40,7 +38,7 @@ export const GAME_MODE_DETAILS: Record<
     ],
   },
   rhythm: {
-    name: "Ritmo",
+    name: "Normal",
     description: "Seguí los versos en el tiempo real de la canción.",
     rules: [
       "La canción nunca espera.",
@@ -49,7 +47,7 @@ export const GAME_MODE_DETAILS: Record<
     ],
   },
   expert: {
-    name: "Experto",
+    name: "Difícil",
     description: "La versión más estricta de TypeTheLyrics.",
     rules: [
       "Distingue mayúsculas y minúsculas.",
@@ -57,32 +55,14 @@ export const GAME_MODE_DETAILS: Record<
       "Los versos avanzan al ritmo de la canción.",
     ],
   },
-  practice: {
-    name: "Práctica",
-    description: "Entrená desde el verso actual sin presión de tiempo.",
-    rules: [
-      "Empieza en el verso que está sonando.",
-      "El verso no se salta si tardás.",
-      "No utiliza vidas.",
-    ],
-  },
-  survival: {
-    name: "Supervivencia",
-    description: "Llegá tan lejos como puedas con solo tres vidas.",
-    rules: [
-      "Cada error consume una vida.",
-      "Omitir un verso también consume una vida.",
-      "La partida termina al llegar a cero vidas.",
-    ],
-  },
 };
 
 // En una sala todos comparten el mismo reloj. Pausar la canción para un solo
-// jugador rompería la sincronización, por eso Relajado avanza sin penalizar.
+// jugador rompería la sincronización, por eso Fácil avanza sin penalizar.
 export const MULTIPLAYER_GAME_MODE_DETAILS: typeof GAME_MODE_DETAILS = {
   ...GAME_MODE_DETAILS,
   relaxed: {
-    name: "Relajado",
+    name: "Fácil",
     description: "Seguí la canción sin penalización por versos incompletos.",
     rules: [
       "Los versos avanzan con la música para mantener sincronizada la sala.",
@@ -93,8 +73,8 @@ export const MULTIPLAYER_GAME_MODE_DETAILS: typeof GAME_MODE_DETAILS = {
 };
 
 export const multiplayerLinePolicy = (mode: GameMode) => ({
-  advanceWithClock: mode !== "practice",
-  penalizeMissed: mode !== "relaxed" && mode !== "practice",
+  advanceWithClock: true,
+  penalizeMissed: mode !== "relaxed",
 });
 
 export const normalizeText = (

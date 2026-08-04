@@ -75,10 +75,8 @@ import {
   scaleLyricsToPlayback,
 } from "@/lib/synchronization";
 import {
-  applyWordTypingKey,
-  countSuccessfulCharacters,
-  countSuccessfulTypedCharacters,
-  formatFailedWords,
+  completedLineStatus,
+  countPositionalMatches,
 } from "@/lib/typing";
 
 type SongCard = {
@@ -205,8 +203,6 @@ export default function Home() {
   const [correct, setCorrect] = useState(0);
   const [mistakes, setMistakes] = useState(0);
   const [currentLineErrors, setCurrentLineErrors] = useState(0);
-  const [failedWords, setFailedWords] = useState<number[]>([]);
-  const [lives, setLives] = useState(3);
   const [startedAt, setStartedAt] = useState(0);
   const [result, setResult] = useState<Result | null>(null);
   const [loading, setLoading] = useState(false);
@@ -250,7 +246,6 @@ export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const spotifyRef = useRef<SpotifyEmbedHandle>(null);
   const lastTypedLength = useRef(0);
-  const lockedTypedLength = useRef(0);
   const feedbackTimer = useRef<number | null>(null);
   const lineResultsRef = useRef<LineResult[]>([]);
   const pausedAtRef = useRef<number | null>(null);
@@ -438,7 +433,7 @@ export default function Home() {
     singerStarted &&
     !finished &&
     !allLinesComplete &&
-    (playing || mode === "relaxed" || mode === "practice");
+    (playing || mode === "relaxed");
   useEffect(() => {
     if (canType) inputRef.current?.focus();
   }, [canType, lineIndex]);
@@ -592,7 +587,6 @@ export default function Home() {
       !started ||
       !playing ||
       mode === "relaxed" ||
-      mode === "practice" ||
       !lyrics.length
     )
       return;
@@ -608,16 +602,11 @@ export default function Home() {
         );
         const attempt = offsetIndex === 0 ? normalizedTyped : "";
         const matching =
-          offsetIndex === 0
-            ? countSuccessfulTypedCharacters(attempt, expected, failedWords)
-            : 0;
+          offsetIndex === 0 ? countPositionalMatches(attempt, expected) : 0;
         return {
           index,
           text: lyrics[index]?.words || "",
-          typed:
-            offsetIndex === 0 && failedWords.length
-              ? formatFailedWords(expected, failedWords).slice(0, attempt.length)
-              : attempt,
+          typed: attempt,
           status: (attempt ? "partial" : "missed") as LineResult["status"],
           points: matching * 3,
           errors: offsetIndex === 0 ? currentLineErrors : 0,
@@ -633,17 +622,13 @@ export default function Home() {
       setCombo(0);
       setTyped("");
       setCurrentLineErrors(0);
-      setFailedWords([]);
       setTypedLineIndex(timedIndex);
       setLineIndex(timedIndex);
       lastTypedLength.current = 0;
-      lockedTypedLength.current = 0;
-      if (mode === "survival") setLives((value) => Math.max(0, value - missed));
     }
   }, [
     addLineResults,
     currentLineErrors,
-    failedWords,
     lowercase,
     lineIndex,
     lyrics,
@@ -655,9 +640,6 @@ export default function Home() {
     started,
     timedIndex,
   ]);
-  useEffect(() => {
-    if (mode === "survival" && started && lives <= 0) finishGame();
-  }, [finishGame, lives, mode, started]);
   useEffect(() => {
     if (
       !started ||
@@ -677,17 +659,12 @@ export default function Home() {
         noPunctuation,
       );
       const matching =
-        index === lineIndex
-          ? countSuccessfulTypedCharacters(attempt, expected, failedWords)
-          : 0;
+        index === lineIndex ? countPositionalMatches(attempt, expected) : 0;
       return [
         {
           index,
           text: line.words,
-          typed:
-            index === lineIndex && failedWords.length
-              ? formatFailedWords(expected, failedWords).slice(0, attempt.length)
-              : attempt,
+          typed: attempt,
           status: (attempt ? "partial" : "missed") as LineResult["status"],
           points: matching * 3,
           errors: index === lineIndex ? currentLineErrors : 0,
@@ -699,7 +676,6 @@ export default function Home() {
   }, [
     addLineResults,
     currentLineErrors,
-    failedWords,
     finishGame,
     finished,
     lineIndex,
@@ -739,13 +715,9 @@ export default function Home() {
   ]);
 
   const resetGame = useCallback(
-    (selectedMode: GameMode = mode, practiceIndex?: number) => {
-      const resetIndex =
-        selectedMode === "practice"
-          ? Math.max(0, practiceIndex ?? timedIndex)
-          : 0;
-      setLineIndex(resetIndex);
-      setTypedLineIndex(resetIndex);
+    () => {
+      setLineIndex(0);
+      setTypedLineIndex(0);
       setTyped("");
       setLineFeedback(null);
       setScore(0);
@@ -754,20 +726,17 @@ export default function Home() {
       setCorrect(0);
       setMistakes(0);
       setCurrentLineErrors(0);
-      setFailedWords([]);
       lineResultsRef.current = [];
       pausedAtRef.current = null;
       pausedTotalRef.current = 0;
       pausedForTypingRef.current = false;
-      setLives(3);
       setFinished(false);
       setAllLinesComplete(false);
       setResult(null);
       setStarted(false);
       lastTypedLength.current = 0;
-      lockedTypedLength.current = 0;
     },
-    [mode, timedIndex],
+    [],
   );
   const beginGame = () => {
     resetGame();
@@ -789,82 +758,65 @@ export default function Home() {
     beginGame();
   };
 
-  const handleTypingKey = (key: string) => {
+  const handleTyping = (value: string) => {
     if (!canType || !current) return;
-    if (key === "Backspace") {
-      if (visibleTyped.length <= lockedTypedLength.current) return;
-      const nextTyped = visibleTyped.slice(0, -1);
-      setTyped(nextTyped);
-      lastTypedLength.current = nextTyped.length;
-      setCorrect((count) => Math.max(0, count - 1));
-      return;
-    }
-
-    const normalizedKey =
-      key === " "
-        ? " "
-        : normalizeText(key, mode === "expert", lowercase, noPunctuation);
-    if ([...normalizedKey].length !== 1) return;
-
-    const outcome = applyWordTypingKey(
-      visibleTyped,
-      target,
-      failedWords,
-      normalizedKey,
+    const nextTyped = normalizeText(
+      value,
+      mode === "expert",
+      lowercase,
+      noPunctuation,
     );
-    if (outcome.typed === visibleTyped) return;
-
-    if (outcome.correctDelta)
-      setCorrect((count) => Math.max(0, count + outcome.correctDelta));
-    if (outcome.mistakeDelta) {
-      setMistakes((count) => count + outcome.mistakeDelta);
-      setCurrentLineErrors((count) => count + outcome.mistakeDelta);
-      setCombo(0);
-      if (mode === "survival")
-        setLives((currentLives) => Math.max(0, currentLives - 1));
+    let addedCorrect = 0;
+    let addedMistakes = 0;
+    if (nextTyped.length > lastTypedLength.current) {
+      for (let at = lastTypedLength.current; at < nextTyped.length; at += 1) {
+        if (nextTyped[at] === target[at]) addedCorrect += 1;
+        else addedMistakes += 1;
+      }
+      if (addedCorrect) setCorrect((count) => count + addedCorrect);
+      if (addedMistakes) {
+        setMistakes((count) => count + addedMistakes);
+        setCurrentLineErrors((count) => count + addedMistakes);
+        setCombo(0);
+      }
     }
-    if (outcome.wordFailed)
-      lockedTypedLength.current = outcome.lockedLength;
-    const nextFailedWords = outcome.failedWords;
-    const totalLineErrors = currentLineErrors + outcome.mistakeDelta;
-    setFailedWords(nextFailedWords);
-    lastTypedLength.current = outcome.typed.length;
+    const totalLineErrors = currentLineErrors + addedMistakes;
+    lastTypedLength.current = nextTyped.length;
     setTypedLineIndex(lineIndex);
-    setTyped(outcome.typed);
-
-    if (outcome.completed) {
-      const isCorrect = nextFailedWords.length === 0;
+    setTyped(value);
+    if (nextTyped.length >= target.length) {
+      const completion = completedLineStatus(nextTyped, target);
+      const isCorrect = completion === "perfect";
       const nextCombo = isCorrect ? combo + 1 : 0;
       const multiplier = Math.min(4, 1 + Math.floor(nextCombo / 5));
       const deadline =
         lyrics[lineIndex + 1]?.startTimeMs || current.startTimeMs + 6000;
       const timingBonus = isCorrect && effectivePosition <= deadline ? 300 : 0;
-      const status: LineResult["status"] = isCorrect ? "perfect" : "partial";
-      const matching = countSuccessfulCharacters(target, nextFailedWords);
+      const status: LineResult["status"] =
+        isCorrect && totalLineErrors > 0 ? "corrected" : completion;
+      const matching = countPositionalMatches(nextTyped, target);
       const points = isCorrect
-        ? target.length * 15 * multiplier + timingBonus
+        ? (status === "perfect" ? target.length * 15 : target.length * 10) *
+            multiplier +
+          timingBonus
         : matching * 6;
       addLineResults([
         {
           index: lineIndex,
           text: current.words,
-          typed: isCorrect
-            ? target
-            : formatFailedWords(target, nextFailedWords),
+          typed: nextTyped,
           status,
           points,
           errors: totalLineErrors,
         },
       ]);
       showLineFeedback(isCorrect ? "correct" : "partial");
-      setScore((value) => value + points);
+      setScore((count) => count + points);
       setCombo(nextCombo);
-      if (isCorrect) setMaxCombo((value) => Math.max(value, nextCombo));
+      if (isCorrect) setMaxCombo((count) => Math.max(count, nextCombo));
       setTyped("");
       setCurrentLineErrors(0);
-      setFailedWords([]);
       lastTypedLength.current = 0;
-      lockedTypedLength.current = 0;
       if (mode === "relaxed" && (pausedForTypingRef.current || !playing)) {
         pausedForTypingRef.current = false;
         sendPlayer("play");
@@ -962,7 +914,7 @@ export default function Home() {
       setLyrics(loadedLyrics);
       setDraftLyrics(loadedLyrics);
       setTab("play");
-      resetGame(mode, 0);
+      resetGame();
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -1460,13 +1412,13 @@ export default function Home() {
                     <p className="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">
                       Modo de juego
                     </p>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       {(Object.keys(MODE_INFO) as GameMode[]).map((key) => (
                         <button
                           key={key}
                           onClick={() => {
                             setMode(key);
-                            resetGame(key);
+                            resetGame();
                           }}
                           title={MODE_INFO[key].description}
                           className={`rounded-lg border px-3 py-2 text-left text-sm ${mode === key ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/5 bg-black/20 text-zinc-400"}`}
@@ -1495,13 +1447,7 @@ export default function Home() {
                           `x${Math.min(4, 1 + Math.floor(combo / 5))}`,
                           "Multiplicador",
                         ],
-                        [
-                          mode === "survival" ? Heart : Keyboard,
-                          mode === "survival"
-                            ? "❤".repeat(lives)
-                            : `${lineIndex + 1}/${lyrics.length}`,
-                          mode === "survival" ? "Vidas" : "Verso",
-                        ],
+                        [Keyboard, `${lineIndex + 1}/${lyrics.length}`, "Verso"],
                       ].map(([Icon, value, label], i) => (
                         <div
                           key={i}
@@ -1652,9 +1598,7 @@ export default function Home() {
                                 <span
                                   key={charIndex}
                                     className={
-                                      failedWords.includes(wordIndex)
-                                        ? "rounded bg-red-500/30 text-red-300"
-                                        : actual == null
+                                      actual == null
                                         ? "text-zinc-300"
                                       : actual === expected
                                         ? "text-emerald-400"
@@ -1686,25 +1630,11 @@ export default function Home() {
                       key={lineIndex}
                       ref={inputRef}
                       value={visibleTyped}
-                      readOnly
+                      onChange={(event) => handleTyping(event.target.value)}
                       onPaste={(event) => event.preventDefault()}
                       onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
                         if (e.key === "Escape") {
                           sendPlayer("pause");
-                          return;
-                        }
-                        if (
-                          ["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Home"].includes(
-                            e.key,
-                          )
-                        ) {
-                          e.preventDefault();
-                          if (e.key === "Backspace") handleTypingKey(e.key);
-                          return;
-                        }
-                        if (e.key.length === 1) {
-                          e.preventDefault();
-                          handleTypingKey(e.key);
                         }
                       }}
                       disabled={!canType}

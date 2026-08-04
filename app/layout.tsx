@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   },
   authors: [{ name: "TypeTheLyrics" }],
   generator: "Next.js",
-  keywords: ["typing", "lyrics", "music", "spotify", "typing practice", "typing game"],
+  keywords: ["typing", "lyrics", "music", "spotify", "music typing", "typing game"],
   creator: "TypeTheLyrics",
   publisher: "TypeTheLyrics",
   openGraph: {

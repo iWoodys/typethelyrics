@@ -1,14 +1,12 @@
 "use client";
 
-import { BookOpen, Heart, ShieldCheck, Timer, X, Zap } from "lucide-react";
+import { ShieldCheck, Timer, X, Zap } from "lucide-react";
 import { GAME_MODE_DETAILS, GameMode } from "@/lib/game";
 
 const ICONS = {
   relaxed: ShieldCheck,
   rhythm: Timer,
   expert: Zap,
-  practice: BookOpen,
-  survival: Heart,
 } as const;
 
 export function GameModesModal({
@@ -45,14 +43,14 @@ export function GameModesModal({
             <X />
           </button>
         </div>
-        <div className="mt-7 grid gap-4 md:grid-cols-2">
+        <div className="mt-7 grid gap-4 md:grid-cols-3">
           {(Object.keys(GAME_MODE_DETAILS) as GameMode[]).map((mode) => {
             const detail = GAME_MODE_DETAILS[mode];
             const Icon = ICONS[mode];
             return (
               <article
                 key={mode}
-                className={`rounded-2xl border p-5 ${mode === "survival" ? "border-red-400/20 bg-red-400/[.06]" : mode === "expert" ? "border-amber-400/20 bg-amber-400/[.06]" : "border-white/10 bg-white/[.04]"}`}
+                className={`rounded-2xl border p-5 ${mode === "expert" ? "border-amber-400/20 bg-amber-400/[.06]" : "border-white/10 bg-white/[.04]"}`}
               >
                 <div className="flex items-center gap-3">
                   <span className="grid h-10 w-10 place-items-center rounded-xl bg-violet-500/15 text-violet-300">

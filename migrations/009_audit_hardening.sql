@@ -14,7 +14,7 @@ declare result_id uuid; computed_rank text; score_cap integer; wpm_cap integer;
 begin
   if auth.uid() is null then raise exception 'Tenes que iniciar sesion.'; end if;
   if target_track_id !~ '^[A-Za-z0-9]{10,30}$'
-    or target_mode not in ('relaxed','rhythm','expert','practice','survival')
+    or target_mode not in ('relaxed','rhythm','expert')
     or target_duration_ms not between 10000 and 1800000
     or target_elapsed_ms not between 1000 and 7200000
     or target_characters not between 1 and 200000 or target_lines not between 1 and 2000 then

@@ -83,7 +83,7 @@ begin
     or length(coalesce(new_artist,'')) not between 1 and 300
     or length(coalesce(new_image,'')) > 1000
     or new_duration not between 10000 and 1800000
-    or new_mode not in ('relaxed','rhythm','expert','practice','survival')
+    or new_mode not in ('relaxed','rhythm','expert')
     or jsonb_typeof(new_lyrics) <> 'array'
     or jsonb_array_length(new_lyrics) not between 1 and 2000
     or pg_column_size(new_lyrics) > 1048576 then
