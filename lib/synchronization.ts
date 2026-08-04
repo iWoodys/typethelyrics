@@ -6,7 +6,11 @@ export function normalizeTimeScale(value: number) {
 
 export function normalizeDeviceOffset(value: number) {
   if (!Number.isFinite(value)) return 0;
-  return Math.round(Math.min(5_000, Math.max(-5_000, value)));
+  // Un navegador no debería necesitar varios segundos de compensación.
+  // Los valores antiguos de ese tamaño solían venir de calibrar una letra
+  // incorrecta y terminaban desincronizando todas las canciones.
+  if (Math.abs(value) > 1_200) return 0;
+  return Math.round(value);
 }
 
 export function deviceOffsetFromFirstVoice(

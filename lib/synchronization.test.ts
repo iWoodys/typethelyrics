@@ -28,7 +28,8 @@ describe("synchronization", () => {
   it("calibra una sola vez la latencia de este dispositivo", () => {
     expect(deviceOffsetFromFirstVoice(10_000, 10_650, 1)).toBe(-650);
     expect(deviceOffsetFromFirstVoice(10_000, 9_700, 1)).toBe(300);
-    expect(normalizeDeviceOffset(50_000)).toBe(5_000);
+    expect(normalizeDeviceOffset(50_000)).toBe(0);
+    expect(normalizeDeviceOffset(-1_201)).toBe(0);
   });
 
   it("prepara Spotify antes de dar la salida multijugador", () => {

@@ -41,7 +41,6 @@ import { readStoredJson } from "@/lib/safe-storage";
 import {
   multiplayerPlaybackPhase,
   normalizeDeviceOffset,
-  scaleLyricsToPlayback,
 } from "@/lib/synchronization";
 import {
   partialLinePoints,
@@ -52,6 +51,7 @@ import {
   type SpotifyEmbedCommand,
   type SpotifyEmbedHandle,
   type SpotifyPlaybackState,
+  type SpotifyControllerStatus,
 } from "@/components/spotify-embed";
 
 type Profile = {
@@ -201,6 +201,8 @@ export default function MultiplayerPage() {
   const [playbackUpdatedAt, setPlaybackUpdatedAt] = useState(0);
   const [playbackPaused, setPlaybackPaused] = useState(true);
   const [playbackBuffering, setPlaybackBuffering] = useState(false);
+  const [spotifyStatus, setSpotifyStatus] =
+    useState<SpotifyControllerStatus>("loading");
   const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
 
   useEffect(
@@ -250,7 +252,19 @@ export default function MultiplayerPage() {
       "ttl-settings-v2",
       {},
     );
-    setDeviceOffsetMs(normalizeDeviceOffset(settings.deviceOffsetMs || 0));
+    const currentCalibration =
+      localStorage.getItem("ttl-device-calibration-v2") === "1";
+    const safeOffset = currentCalibration
+      ? normalizeDeviceOffset(settings.deviceOffsetMs || 0)
+      : 0;
+    setDeviceOffsetMs(safeOffset);
+    if (!currentCalibration) {
+      localStorage.setItem("ttl-device-calibration-v2", "1");
+      localStorage.setItem(
+        "ttl-settings-v2",
+        JSON.stringify({ ...settings, deviceOffsetMs: 0 }),
+      );
+    }
   }, []);
 
   const loadMessages = useCallback(async (roomId: string) => {
@@ -525,14 +539,9 @@ export default function MultiplayerPage() {
       };
       if (!response.ok)
         throw new Error(data.error || "No encontramos letras sincronizadas.");
-      const sharedTimeScale =
-        data.syncAdjustment?.confidence === "medium"
-          ? 1
-          : data.syncAdjustment?.suggestedTimeScale || 1;
-      const sharedLyrics = scaleLyricsToPlayback(
-        data.syncedLyrics,
-        sharedTimeScale,
-      );
+      // Se comparten los tiempos aprobados tal como fueron creados. Estirarlos
+      // por la duración de Spotify generaba un error acumulativo al final.
+      const sharedLyrics = data.syncedLyrics;
       const { error: rpcError } = await supabase.rpc("configure_lobby", {
         target_lobby: lobby.id,
         new_track_id: match[1],
@@ -545,6 +554,7 @@ export default function MultiplayerPage() {
         new_mode: selectedMode,
       });
       if (rpcError) throw rpcError;
+      setSpotifyStatus("loading");
       await loadRoom(lobby.id);
     } catch (reason) {
       setError(
@@ -610,6 +620,10 @@ export default function MultiplayerPage() {
 
   const startLobby = async () => {
     if (!lobby) return;
+    if (spotifyStatus !== "ready") {
+      setError("Spotify todavía no entregó un reloj fiable en este navegador.");
+      return;
+    }
     setError("");
     const { error: rpcError } = await supabase.rpc("start_lobby", {
       target_lobby: lobby.id,
@@ -1362,10 +1376,22 @@ export default function MultiplayerPage() {
           <section className="rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7">
             {lobby.spotify_track_id && (
               <SpotifyEmbed
+                key={lobby.spotify_track_id}
                 ref={spotifyRef}
                 trackId={lobby.spotify_track_id}
                 onPlaybackUpdate={handlePlaybackUpdate}
+                onControllerStatus={setSpotifyStatus}
               />
+            )}
+            {lobby.spotify_track_id && spotifyStatus === "loading" && (
+              <p className="mt-3 rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3 text-sm text-cyan-100">
+                Preparando el reloj de Spotify…
+              </p>
+            )}
+            {lobby.spotify_track_id && spotifyStatus === "unavailable" && (
+              <p role="alert" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
+                Spotify no entregó el reloj necesario para jugar sincronizado. Recargá la página o desactivá el bloqueador de contenido.
+              </p>
             )}
             {!inGame && lobby.host_id === authUser.id && (
               <div className="mt-5 space-y-5">
@@ -1490,7 +1516,7 @@ export default function MultiplayerPage() {
                 </div>
                 {lobby.host_id === authUser.id ? (
                   <button
-                    disabled={!allReady || !allAudioReady}
+                    disabled={!allReady || !allAudioReady || spotifyStatus !== "ready"}
                     onClick={startLobby}
                     className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30"
                   >
@@ -1499,7 +1525,8 @@ export default function MultiplayerPage() {
                 ) : (
                   <button
                     onClick={toggleReady}
-                    className={`rounded-xl px-5 py-3 font-black ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
+                    disabled={spotifyStatus !== "ready"}
+                    className={`rounded-xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-40 ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
                   >
                     {me?.ready ? "¡Listo!" : "Estoy listo"}
                   </button>
@@ -1543,6 +1570,18 @@ export default function MultiplayerPage() {
                       <div role="status" className="mb-4 rounded-xl border border-cyan-300/30 bg-cyan-300/10 p-3 text-center text-sm text-cyan-100">
                         Spotify está cargando. La escritura se reanudará cuando vuelva el audio.
                       </div>
+                    )}
+                    {playbackPaused && singerStarted && !playbackBuffering && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          spotifyRef.current?.seek(wallPosition / 1000);
+                          sendPlayer("play");
+                        }}
+                        className="mb-4 w-full rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm font-bold text-amber-100"
+                      >
+                        Reanudar Spotify en el tiempo de la sala
+                      </button>
                     )}
                     <div
                       onClick={() => inputRef.current?.focus()}

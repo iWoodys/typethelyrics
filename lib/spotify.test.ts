@@ -46,11 +46,11 @@ describe("selectBestLyricsCandidate", () => {
     expect(result?.candidate.id).toBe(5);
   });
 
-  it("sólo propone escalas temporales dentro de un margen seguro", () => {
+  it("no estira la letra por una diferencia de duración", () => {
     expect(
       selectBestLyricsCandidate([candidate({ duration: 161 })], track)
         ?.suggestedTimeScale,
-    ).toBeCloseTo(163 / 161, 5);
+    ).toBe(1);
     expect(
       selectBestLyricsCandidate([candidate({ duration: 140 })], track)
         ?.suggestedTimeScale,

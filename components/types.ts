@@ -2,6 +2,8 @@ export interface LyricsResponse {
   lyrics: string;
   syncType: string;
   syncedLyrics: { startTimeMs: number; words: string; }[];
+  originalSyncedLyrics?: { startTimeMs: number; words: string; }[];
+  lyricsOrigin?: "LRCLIB" | "community";
   trackDetails: TrackDetails;
   lyricsSource?: {
     provider: "LRCLIB";

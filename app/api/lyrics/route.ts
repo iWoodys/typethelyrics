@@ -3,6 +3,7 @@ import { checkSpotifyUrl, getLyrics } from '@/lib/spotify';
 import { rateLimit } from '@/lib/rate-limit';
 import { validateSyncedLyrics } from '@/lib/lyrics';
 import { readJsonBody } from '@/lib/request';
+import { supabase } from '@/lib/supabase';
 
 export async function POST(request: Request) {
   const retryAfter = rateLimit(request, 'lyrics', 15);
@@ -43,14 +44,38 @@ export async function POST(request: Request) {
       );
     }
 
-    const syncedLyrics = validateSyncedLyrics(
+    const originalSyncedLyrics = validateSyncedLyrics(
       regularLyrics.syncedLyrics,
       regularLyrics.trackDetails.track_duration_ms,
     );
+    let syncedLyrics = originalSyncedLyrics;
+    let lyricsOrigin: 'LRCLIB' | 'community' = 'LRCLIB';
+
+    // La misma corrección aprobada se sirve a individual y multijugador.
+    // Si Supabase no está disponible, LRCLIB sigue funcionando como respaldo.
+    const { data: approvedRows, error: approvedError } = await supabase.rpc(
+      'get_approved_lyrics',
+      { target_track_id: id },
+    );
+    const approved = Array.isArray(approvedRows) ? approvedRows[0] : null;
+    if (!approvedError && Array.isArray(approved?.lyrics) && approved.lyrics.length) {
+      try {
+        syncedLyrics = validateSyncedLyrics(
+          approved.lyrics,
+          regularLyrics.trackDetails.track_duration_ms,
+        );
+        lyricsOrigin = 'community';
+      } catch (validationError) {
+        console.warn('Ignoring invalid approved lyrics:', validationError);
+      }
+    }
+
     return NextResponse.json({
       lyrics: regularLyrics.lyrics,
       syncType: regularLyrics.syncType,
       syncedLyrics,
+      originalSyncedLyrics,
+      lyricsOrigin,
       trackDetails: regularLyrics.trackDetails,
       lyricsSource: regularLyrics.lyricsSource,
       syncAdjustment: regularLyrics.syncAdjustment,

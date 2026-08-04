@@ -52,6 +52,7 @@ declare global {
 }
 
 export type SpotifyEmbedCommand = "pause" | "play" | "restart" | "resume";
+export type SpotifyControllerStatus = "loading" | "ready" | "unavailable";
 
 export type SpotifyEmbedHandle = {
   command: (command: SpotifyEmbedCommand) => void;
@@ -65,6 +66,7 @@ type SpotifyEmbedProps = {
   onPlaybackUpdate?: (state: SpotifyPlaybackState) => void;
   onPlaybackStarted?: () => void;
   onReady?: () => void;
+  onControllerStatus?: (status: SpotifyControllerStatus) => void;
 };
 
 let iframeApiPromise: Promise<SpotifyIframeApi> | null = null;
@@ -116,17 +118,20 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
       onPlaybackUpdate,
       onPlaybackStarted,
       onReady,
+      onControllerStatus,
     },
     ref,
   ) {
     const mountRef = useRef<HTMLDivElement>(null);
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const controllerRef = useRef<SpotifyEmbedController | null>(null);
+    const controllerReadyRef = useRef(false);
     const fallbackActiveRef = useRef(false);
     const [useNativeFallback, setUseNativeFallback] = useState(false);
     const updateRef = useRef(onPlaybackUpdate);
     const startedRef = useRef(onPlaybackStarted);
     const readyRef = useRef(onReady);
+    const statusRef = useRef(onControllerStatus);
     const sampleRef = useRef<(SpotifyPlaybackState & { receivedAt: number }) | null>(
       null,
     );
@@ -136,6 +141,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
     updateRef.current = onPlaybackUpdate;
     startedRef.current = onPlaybackStarted;
     readyRef.current = onReady;
+    statusRef.current = onControllerStatus;
 
     useImperativeHandle(
       ref,
@@ -168,9 +174,11 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
       const mount = mountRef.current;
 
       fallbackActiveRef.current = useNativeFallback;
+      controllerReadyRef.current = false;
       sampleRef.current = null;
       displayedRef.current = 0;
       lastTickRef.current = performance.now();
+      statusRef.current?.(useNativeFallback ? "unavailable" : "loading");
 
       const acceptPlaybackUpdate = (state: SpotifyPlaybackState) => {
         if (!Number.isFinite(state.position)) return;
@@ -193,9 +201,12 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
       };
 
       const activateFallback = () => {
-        if (cancelled || controllerRef.current || fallbackActiveRef.current)
+        if (cancelled || controllerReadyRef.current || fallbackActiveRef.current)
           return;
+        controllerRef.current?.destroy();
+        controllerRef.current = null;
         fallbackActiveRef.current = true;
+        statusRef.current?.("unavailable");
         setUseNativeFallback(true);
       };
 
@@ -244,11 +255,11 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
         });
       }, 100);
 
-      // Algunos navegadores o bloqueadores cargan el script de Spotify pero no
-      // entregan su controlador. En ese caso volvemos al iframe clásico, que
-      // mantiene el audio y los eventos de reproducción funcionando.
+      // Una conexión lenta no debe mandar al jugador a un iframe sin reloj.
+      // Esperamos al controlador; el iframe clásico queda sólo como respaldo
+      // para escuchar, pero el juego sabrá que no puede sincronizarse con él.
       if (!useNativeFallback && mount) {
-        fallbackTimer = window.setTimeout(activateFallback, 800);
+        fallbackTimer = window.setTimeout(activateFallback, 8_000);
 
         void loadIframeApi()
           .then((api) => {
@@ -269,9 +280,13 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
                   controller.destroy();
                   return;
                 }
-                if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
                 controllerRef.current = controller;
-                controller.addListener("ready", () => readyRef.current?.());
+                controller.addListener("ready", () => {
+                  controllerReadyRef.current = true;
+                  if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+                  statusRef.current?.("ready");
+                  readyRef.current?.();
+                });
                 controller.addListener("playback_started", () =>
                   startedRef.current?.(),
                 );
@@ -310,7 +325,6 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
             height={height}
             allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
             loading="eager"
-            onLoad={() => readyRef.current?.()}
             className="block border-0"
           />
         ) : (

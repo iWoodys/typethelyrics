@@ -91,16 +91,6 @@ export function selectBestLyricsCandidate(
 
   scored.sort((left, right) => right.score - left.score);
   const best = scored[0];
-  const ratio = track.duration_ms / Math.max(1, best.candidate.duration * 1000);
-  const safeScale =
-    best.titleExact &&
-    best.artistExact &&
-    best.durationDeltaMs >= 1_500 &&
-    best.durationDeltaMs <= 6_000 &&
-    ratio >= 0.985 &&
-    ratio <= 1.015
-      ? ratio
-      : 1;
   const confidence =
     best.titleExact && best.artistExact && best.durationDeltaMs <= 1_200
       ? "exact"
@@ -112,7 +102,9 @@ export function selectBestLyricsCandidate(
     candidate: best.candidate,
     confidence,
     durationDeltaMs: Math.round(best.durationDeltaMs),
-    suggestedTimeScale: Math.round(safeScale * 1_000_000) / 1_000_000,
+    // Una diferencia de duración no demuestra que toda la letra deba
+    // estirarse. Ese ajuste acumulaba varios segundos de error al final.
+    suggestedTimeScale: 1,
   };
 }
 
@@ -169,37 +161,38 @@ export const getLyrics = async (trackId: string, format: 'lrc' | 'srt' = 'lrc') 
     const track = await spotifyFetch<SpotifyTrack>(`/tracks/${encodeURIComponent(trackId)}`);
 
     const artist = track.artists.map(item => item.name).join(', ');
-    const searchParams = new URLSearchParams({
-      track_name: track.name,
-      artist_name: artist,
-    });
     const headers = {
       'Lrclib-Client': 'TypeTheLyrics/0.1.0 (https://github.com/iWoodys/typethelyrics)',
     };
-    const searchResponse = await fetch(`https://lrclib.net/api/search?${searchParams}`, {
+    const exactParams = new URLSearchParams({
+      track_name: track.name,
+      artist_name: artist,
+      album_name: track.album.name,
+      duration: Math.round(track.duration_ms / 1000).toString(),
+    });
+    const exactResponse = await fetch(`https://lrclib.net/api/get?${exactParams}`, {
       headers,
       next: { revalidate: 86400 },
     });
-    const candidates = searchResponse.ok
-      ? await searchResponse.json() as LrclibCandidate[]
-      : [];
-    let match = selectBestLyricsCandidate(candidates, track);
+    let match: LyricsMatch | null = null;
+    if (exactResponse.ok) {
+      const exact = await exactResponse.json() as LrclibCandidate;
+      match = selectBestLyricsCandidate([exact], track);
+    }
 
     if (!match) {
-      const exactParams = new URLSearchParams({
+      const searchParams = new URLSearchParams({
         track_name: track.name,
         artist_name: artist,
-        album_name: track.album.name,
-        duration: Math.round(track.duration_ms / 1000).toString(),
       });
-      const response = await fetch(`https://lrclib.net/api/get?${exactParams}`, {
+      const searchResponse = await fetch(`https://lrclib.net/api/search?${searchParams}`, {
         headers,
         next: { revalidate: 86400 },
       });
-      if (response.ok) {
-        const exact = await response.json() as LrclibCandidate;
-        match = selectBestLyricsCandidate([exact], track);
-      }
+      const candidates = searchResponse.ok
+        ? await searchResponse.json() as LrclibCandidate[]
+        : [];
+      match = selectBestLyricsCandidate(candidates, track);
     }
 
     if (!match) {
