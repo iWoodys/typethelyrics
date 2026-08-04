@@ -45,6 +45,7 @@ import {
 import {
   partialLinePoints,
   shouldCompleteLine,
+  typingAlignment,
 } from "@/lib/typing";
 import {
   SpotifyEmbed,
@@ -919,6 +920,10 @@ export default function MultiplayerPage() {
     true,
     false,
   );
+  const characterFeedback = useMemo(
+    () => typingAlignment(normalizedTyped, target).feedback,
+    [normalizedTyped, target],
+  );
   const singerStarted =
     !!currentLine && gamePosition >= currentLine.startTimeMs;
   const lineWaitMs = currentLine
@@ -1154,10 +1159,10 @@ export default function MultiplayerPage() {
     let addedCorrect = 0;
     let addedMistakes = 0;
     if (normalized.length > lastTypedLength.current) {
-      for (let at = lastTypedLength.current; at < normalized.length; at += 1) {
-        if (normalized[at] === target[at]) addedCorrect += 1;
-        else addedMistakes += 1;
-      }
+      const previousAlignment = typingAlignment(normalizedTyped, target);
+      const nextAlignment = typingAlignment(normalized, target);
+      addedCorrect = Math.max(0, nextAlignment.matches - previousAlignment.matches);
+      addedMistakes = Math.max(0, nextAlignment.errors - previousAlignment.errors);
       if (addedCorrect) setCorrect((old) => old + addedCorrect);
       if (addedMistakes) {
         setMistakes((old) => old + addedMistakes);
@@ -1637,15 +1642,14 @@ export default function MultiplayerPage() {
                                     .join(" ").length +
                                   (wordIndex ? 1 : 0) +
                                   charIndex;
-                                const actual = normalizedTyped[before];
-                                const expected = target[before];
+                                const feedback = characterFeedback[before];
                                 return (
                                   <span
                                     key={charIndex}
                                     className={
-                                      actual == null
+                                      feedback === "pending"
                                         ? "text-zinc-300"
-                                        : actual === expected
+                                        : feedback === "correct"
                                           ? "text-emerald-400"
                                           : "rounded bg-red-500/30 text-red-300"
                                     }

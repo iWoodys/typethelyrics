@@ -79,6 +79,7 @@ import {
 import {
   partialLinePoints,
   shouldCompleteLine,
+  typingAlignment,
 } from "@/lib/typing";
 
 type SongCard = {
@@ -437,6 +438,10 @@ export default function Home() {
     mode === "expert",
     lowercase,
     noPunctuation,
+  );
+  const characterFeedback = useMemo(
+    () => typingAlignment(normalizedTyped, target).feedback,
+    [normalizedTyped, target],
   );
   const lineWaitMs = current
     ? Math.max(
@@ -828,10 +833,10 @@ export default function Home() {
     let addedCorrect = 0;
     let addedMistakes = 0;
     if (nextTyped.length > lastTypedLength.current) {
-      for (let at = lastTypedLength.current; at < nextTyped.length; at += 1) {
-        if (nextTyped[at] === target[at]) addedCorrect += 1;
-        else addedMistakes += 1;
-      }
+      const previousAlignment = typingAlignment(normalizedTyped, target);
+      const nextAlignment = typingAlignment(nextTyped, target);
+      addedCorrect = Math.max(0, nextAlignment.matches - previousAlignment.matches);
+      addedMistakes = Math.max(0, nextAlignment.errors - previousAlignment.errors);
       if (addedCorrect) setCorrect((count) => count + addedCorrect);
       if (addedMistakes) {
         setMistakes((count) => count + addedMistakes);
@@ -1696,15 +1701,14 @@ export default function Home() {
                                   .join(" ").length +
                                 (wordIndex ? 1 : 0) +
                                 charIndex;
-                              const actual = normalizedTyped[before];
-                              const expected = target[before];
+                              const feedback = characterFeedback[before];
                               return (
                                 <span
                                   key={charIndex}
                                     className={
-                                      actual == null
+                                      feedback === "pending"
                                         ? "text-zinc-300"
-                                      : actual === expected
+                                      : feedback === "correct"
                                         ? "text-emerald-400"
                                         : "rounded bg-red-500/30 text-red-300"
                                   }
