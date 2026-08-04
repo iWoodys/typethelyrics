@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -52,7 +53,11 @@ declare global {
 }
 
 export type SpotifyEmbedCommand = "pause" | "play" | "restart" | "resume";
-export type SpotifyControllerStatus = "loading" | "ready" | "unavailable";
+export type SpotifyControllerStatus =
+  | "loading"
+  | "ready"
+  | "fallback"
+  | "unavailable";
 
 export type SpotifyEmbedHandle = {
   command: (command: SpotifyEmbedCommand) => void;
@@ -61,6 +66,7 @@ export type SpotifyEmbedHandle = {
 
 type SpotifyEmbedProps = {
   trackId: string;
+  durationMs?: number;
   height?: number;
   className?: string;
   onPlaybackUpdate?: (state: SpotifyPlaybackState) => void;
@@ -113,6 +119,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
   function SpotifyEmbed(
     {
       trackId,
+      durationMs = 0,
       height = 152,
       className = "",
       onPlaybackUpdate,
@@ -143,6 +150,48 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
     readyRef.current = onReady;
     statusRef.current = onControllerStatus;
 
+    const updateFallbackClock = useCallback(
+      (action: SpotifyEmbedCommand | "seek", seekSeconds = 0) => {
+        const now = performance.now();
+        const previous = sampleRef.current;
+        const elapsed = previous && !previous.isPaused
+          ? Math.max(0, now - previous.receivedAt)
+          : 0;
+        let nextPosition = Math.max(
+          0,
+          (previous?.position || displayedRef.current || 0) + elapsed,
+        );
+        let isPaused = previous?.isPaused ?? true;
+
+        if (action === "restart") {
+          nextPosition = 0;
+          isPaused = true;
+        } else if (action === "pause") {
+          isPaused = true;
+        } else if (action === "play" || action === "resume") {
+          isPaused = false;
+        } else {
+          nextPosition = Math.max(0, seekSeconds * 1000);
+        }
+
+        const duration = durationMs || previous?.duration || 0;
+        if (duration) nextPosition = Math.min(duration, nextPosition);
+        const nextState: SpotifyPlaybackState & { receivedAt: number } = {
+          position: nextPosition,
+          duration,
+          isPaused,
+          isBuffering: false,
+          playingURI: `spotify:track:${trackId}`,
+          receivedAt: now,
+        };
+        sampleRef.current = nextState;
+        displayedRef.current = nextPosition;
+        lastTickRef.current = now;
+        updateRef.current?.(nextState);
+      },
+      [durationMs, trackId],
+    );
+
     useImperativeHandle(
       ref,
       () => ({
@@ -155,16 +204,20 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
             else controller.restart();
             return;
           }
+          if (fallbackActiveRef.current) updateFallbackClock(command);
           iframeRef.current?.contentWindow?.postMessage(
             { command },
             SPOTIFY_ORIGIN,
           );
         },
         seek(seconds) {
-          controllerRef.current?.seek(Math.max(0, Math.round(seconds)));
+          const safeSeconds = Math.max(0, Math.round(seconds));
+          if (controllerRef.current) controllerRef.current.seek(safeSeconds);
+          else if (fallbackActiveRef.current)
+            updateFallbackClock("seek", safeSeconds);
         },
       }),
-      [],
+      [updateFallbackClock],
     );
 
     useEffect(() => {
@@ -178,7 +231,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
       sampleRef.current = null;
       displayedRef.current = 0;
       lastTickRef.current = performance.now();
-      statusRef.current?.(useNativeFallback ? "unavailable" : "loading");
+      statusRef.current?.("loading");
 
       const acceptPlaybackUpdate = (state: SpotifyPlaybackState) => {
         if (!Number.isFinite(state.position)) return;
@@ -206,7 +259,6 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
         controllerRef.current?.destroy();
         controllerRef.current = null;
         fallbackActiveRef.current = true;
-        statusRef.current?.("unavailable");
         setUseNativeFallback(true);
       };
 
@@ -281,11 +333,17 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
                   return;
                 }
                 controllerRef.current = controller;
+                // createController ya entrega un controlador utilizable. En
+                // algunos navegadores el evento `ready` ocurre antes de que
+                // podamos suscribirnos, por lo que no debemos esperar por él.
+                controllerReadyRef.current = true;
+                if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+                statusRef.current?.("ready");
+                readyRef.current?.();
                 controller.addListener("ready", () => {
                   controllerReadyRef.current = true;
                   if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
                   statusRef.current?.("ready");
-                  readyRef.current?.();
                 });
                 controller.addListener("playback_started", () =>
                   startedRef.current?.(),
@@ -309,7 +367,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
         controllerRef.current = null;
         if (mount?.isConnected) mount.replaceChildren();
       };
-    }, [height, trackId, useNativeFallback]);
+    }, [height, trackId, updateFallbackClock, useNativeFallback]);
 
     return (
       <div
@@ -325,6 +383,11 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
             height={height}
             allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
             loading="eager"
+            onLoad={() => {
+              statusRef.current?.("fallback");
+              readyRef.current?.();
+            }}
+            onError={() => statusRef.current?.("unavailable")}
             className="block border-0"
           />
         ) : (

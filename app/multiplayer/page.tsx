@@ -1379,6 +1379,7 @@ export default function MultiplayerPage() {
                 key={lobby.spotify_track_id}
                 ref={spotifyRef}
                 trackId={lobby.spotify_track_id}
+                durationMs={lobby.duration_ms || 0}
                 onPlaybackUpdate={handlePlaybackUpdate}
                 onControllerStatus={setSpotifyStatus}
               />
@@ -1391,6 +1392,11 @@ export default function MultiplayerPage() {
             {lobby.spotify_track_id && spotifyStatus === "unavailable" && (
               <p role="alert" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
                 Spotify no entregó el reloj necesario para jugar sincronizado. Recargá la página o desactivá el bloqueador de contenido.
+              </p>
+            )}
+            {lobby.spotify_track_id && spotifyStatus === "fallback" && (
+              <p className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
+                Spotify está usando el modo compatible. Para no desincronizar la sala, recargá la página antes de marcarte como listo.
               </p>
             )}
             {!inGame && lobby.host_id === authUser.id && (

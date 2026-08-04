@@ -796,7 +796,7 @@ export default function Home() {
     }, 180);
   };
   const startGame = () => {
-    if (spotifyStatus !== "ready") {
+    if (spotifyStatus === "loading" || spotifyStatus === "unavailable") {
       setError(
         spotifyStatus === "loading"
           ? "Esperá unos segundos: Spotify todavía está preparando el reproductor."
@@ -813,7 +813,7 @@ export default function Home() {
   const acceptSpotifyNotice = () => {
     localStorage.setItem(LS.spotifyNotice, "1");
     setSpotifyNoticeOpen(false);
-    if (spotifyStatus === "ready") beginGame();
+    if (spotifyStatus === "ready" || spotifyStatus === "fallback") beginGame();
     else setError("Spotify todavía no está listo. Esperá unos segundos y volvé a comenzar.");
   };
 
@@ -1484,6 +1484,7 @@ export default function Home() {
                     key={trackId}
                     ref={spotifyRef}
                     trackId={trackId}
+                    durationMs={track.track_duration_ms}
                     onControllerStatus={setSpotifyStatus}
                     onPlaybackUpdate={(state) => {
                       setPosition(state.position);
@@ -1499,6 +1500,11 @@ export default function Home() {
                   {spotifyStatus === "unavailable" && (
                     <p role="alert" className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
                       El reproductor visible puede reproducir audio, pero no entregó el reloj necesario para sincronizar el juego. Recargá la página o desactivá el bloqueador de contenido.
+                    </p>
+                  )}
+                  {spotifyStatus === "fallback" && (
+                    <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
+                      Spotify está usando el modo compatible. Pulsá Play dentro de Spotify y enseguida Comenzar partida; el juego mantendrá un reloj propio.
                     </p>
                   )}
                   <div className="rounded-2xl border border-white/10 bg-white/[.04] p-4">
@@ -1774,7 +1780,7 @@ export default function Home() {
                       {!started && (
                         <button
                           onClick={startGame}
-                          disabled={spotifyStatus !== "ready"}
+                          disabled={spotifyStatus === "loading" || spotifyStatus === "unavailable"}
                           className="rounded-xl bg-white px-7 py-3 font-bold text-black disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Comenzar partida
