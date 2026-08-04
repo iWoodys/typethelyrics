@@ -39,12 +39,13 @@ import {
 import type { LyricsResponse, SyncedLyric } from "@/components/types";
 import { readStoredJson } from "@/lib/safe-storage";
 import {
+  multiplayerPlaybackPhase,
   normalizeDeviceOffset,
   scaleLyricsToPlayback,
 } from "@/lib/synchronization";
 import {
-  completedLineStatus,
-  countPositionalMatches,
+  partialLinePoints,
+  shouldCompleteLine,
 } from "@/lib/typing";
 import {
   SpotifyEmbed,
@@ -192,11 +193,23 @@ export default function MultiplayerPage() {
   const publishingProgressRef = useRef(false);
   const audioReadySentRef = useRef<boolean | null>(null);
   const lastAudioResyncRef = useRef(0);
+  const lastAudioResumeRef = useRef(0);
+  const countdownPreparedForRef = useRef<string | null>(null);
+  const countdownPlaySentForRef = useRef<string | null>(null);
+  const countdownPauseTimerRef = useRef<number | null>(null);
   const [playbackPosition, setPlaybackPosition] = useState<number | null>(null);
   const [playbackUpdatedAt, setPlaybackUpdatedAt] = useState(0);
   const [playbackPaused, setPlaybackPaused] = useState(true);
   const [playbackBuffering, setPlaybackBuffering] = useState(false);
   const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
+
+  useEffect(
+    () => () => {
+      if (countdownPauseTimerRef.current !== null)
+        window.clearTimeout(countdownPauseTimerRef.current);
+    },
+    [],
+  );
 
   const synchronizeServerClock = useCallback(async () => {
     const samples: Array<{ offset: number; roundTrip: number }> = [];
@@ -655,6 +668,14 @@ export default function MultiplayerPage() {
     const { error: leaveError } = await supabase.rpc("leave_lobby", { target_lobby: lobby.id });
     setWorking(false);
     if (leaveError) { setError(leaveError.message); return; }
+    countdownPreparedForRef.current = null;
+    countdownPlaySentForRef.current = null;
+    lastAudioResumeRef.current = 0;
+    lastAudioResyncRef.current = 0;
+    if (countdownPauseTimerRef.current !== null) {
+      window.clearTimeout(countdownPauseTimerRef.current);
+      countdownPauseTimerRef.current = null;
+    }
     setLobby(null); setPlayers([]); setMessages([]); setStartedAt(0); setLocalFinished(false);
     history.replaceState(null, "", "/multiplayer");
   };
@@ -681,6 +702,14 @@ export default function MultiplayerPage() {
     setMaxCombo(0);
     setCorrect(0);
     setMistakes(0);
+    countdownPreparedForRef.current = null;
+    countdownPlaySentForRef.current = null;
+    lastAudioResumeRef.current = 0;
+    lastAudioResyncRef.current = 0;
+    if (countdownPauseTimerRef.current !== null) {
+      window.clearTimeout(countdownPauseTimerRef.current);
+      countdownPauseTimerRef.current = null;
+    }
     submittedRef.current = false;
     lastProgressRef.current = "";
     lastLineRef.current = 0;
@@ -695,6 +724,14 @@ export default function MultiplayerPage() {
   );
   useEffect(() => {
     audioReadySentRef.current = null;
+    countdownPreparedForRef.current = null;
+    countdownPlaySentForRef.current = null;
+    lastAudioResumeRef.current = 0;
+    lastAudioResyncRef.current = 0;
+    if (countdownPauseTimerRef.current !== null) {
+      window.clearTimeout(countdownPauseTimerRef.current);
+      countdownPauseTimerRef.current = null;
+    }
     setPlaybackPosition(null);
     setPlaybackPaused(true);
     setPlaybackBuffering(false);
@@ -720,20 +757,48 @@ export default function MultiplayerPage() {
   useEffect(() => {
     if (!lobby?.start_at || !["countdown", "playing"].includes(lobby.status))
       return;
+    const startAt = new Date(lobby.start_at).getTime();
+    const startKey = `${lobby.id}:${lobby.start_at}`;
     const tick = () => {
-      const remaining =
-        new Date(lobby.start_at!).getTime() - (Date.now() + serverClockOffset);
+      const remaining = startAt - (Date.now() + serverClockOffset);
       setCountdown(remaining > 0 ? Math.ceil(remaining / 1000) : 0);
-      if (remaining <= 0 && !startedAt) {
+      const phase = multiplayerPlaybackPhase(remaining);
+      if (countdownPreparedForRef.current !== startKey) {
+        countdownPreparedForRef.current = startKey;
+        countdownPlaySentForRef.current = null;
+        lastAudioResumeRef.current = 0;
+        lastAudioResyncRef.current = 0;
         setLineIndex(0);
         setTypedLineIndex(0);
         setTyped("");
         lastTypedLength.current = 0;
         setLineFeedback(null);
         setAllLinesComplete(false);
-        setStartedAt(new Date(lobby.start_at!).getTime());
         sendPlayer("restart");
+        setPlaybackPosition(0);
+        setPlaybackPaused(true);
+        if (countdownPauseTimerRef.current !== null)
+          window.clearTimeout(countdownPauseTimerRef.current);
+        if (phase === "prepare" && remaining > 500) {
+          countdownPauseTimerRef.current = window.setTimeout(() => {
+            countdownPauseTimerRef.current = null;
+            sendPlayer("pause");
+          }, 250);
+        }
+      }
+      if (
+        phase !== "prepare" &&
+        countdownPlaySentForRef.current !== startKey
+      ) {
+        if (countdownPauseTimerRef.current !== null) {
+          window.clearTimeout(countdownPauseTimerRef.current);
+          countdownPauseTimerRef.current = null;
+        }
+        countdownPlaySentForRef.current = startKey;
         sendPlayer("play");
+      }
+      if (phase === "started" && !startedAt) {
+        setStartedAt(startAt);
         void supabase.rpc("mark_lobby_playing", { target_lobby: lobby.id });
       }
     };
@@ -775,7 +840,28 @@ export default function MultiplayerPage() {
   const playbackDrift = estimatedPlaybackPosition === null
     ? null
     : estimatedPlaybackPosition - wallPosition;
-  const synchronized = playbackDrift === null || wallPosition < 5_000 || Math.abs(playbackDrift) <= 1_500;
+  const synchronized = playbackDrift === null || wallPosition < 1_000 || Math.abs(playbackDrift) <= 1_500;
+
+  useEffect(() => {
+    if (
+      !startedAt ||
+      localFinished ||
+      playbackBuffering ||
+      !playbackPaused ||
+      wallPosition < 300 ||
+      Date.now() - lastAudioResumeRef.current < 1_500
+    )
+      return;
+    lastAudioResumeRef.current = Date.now();
+    sendPlayer("play");
+  }, [
+    localFinished,
+    playbackBuffering,
+    playbackPaused,
+    sendPlayer,
+    startedAt,
+    wallPosition,
+  ]);
 
   useEffect(() => {
     if (
@@ -784,7 +870,7 @@ export default function MultiplayerPage() {
       playbackDrift === null ||
       playbackPaused ||
       playbackBuffering ||
-      wallPosition < 5_000 ||
+      wallPosition < 1_000 ||
       Math.abs(playbackDrift) <= 1_500 ||
       Date.now() - lastAudioResyncRef.current < 5_000
     )
@@ -870,6 +956,8 @@ export default function MultiplayerPage() {
     )
       return;
     const missed = timedIndex - lineIndex;
+    const partialPoints = partialLinePoints(normalizedTyped, target);
+    if (partialPoints) setScore((value) => value + partialPoints);
     if (multiplayerLinePolicy(gameMode).penalizeMissed) {
       setMistakes((value) => value + missed);
       setCombo(0);
@@ -887,6 +975,7 @@ export default function MultiplayerPage() {
     normalizedTyped,
     showLineFeedback,
     startedAt,
+    target,
     timedIndex,
   ]);
 
@@ -902,7 +991,10 @@ export default function MultiplayerPage() {
     const finalCorrect = finalStats?.correct ?? correct;
     const finalMistakes = finalStats?.mistakes ?? mistakes;
     const finalMaxCombo = finalStats?.maxCombo ?? maxCombo;
-    const minutes = Math.max((Date.now() - startedAt) / 60000, 1 / 60);
+    const minutes = Math.max(
+      (Date.now() + serverClockOffset - startedAt) / 60000,
+      1 / 60,
+    );
     const accuracy = finalCorrect + finalMistakes
       ? (finalCorrect / (finalCorrect + finalMistakes)) * 100
       : 0;
@@ -926,12 +1018,16 @@ export default function MultiplayerPage() {
     mistakes,
     score,
     sendPlayer,
+    serverClockOffset,
     startedAt,
   ]);
 
   const liveAccuracy =
     correct + mistakes ? (correct / (correct + mistakes)) * 100 : 100;
-  const liveMinutes = Math.max((Date.now() - startedAt) / 60000, 1 / 60);
+  const liveMinutes = Math.max(
+    (clock + serverClockOffset - startedAt) / 60000,
+    1 / 60,
+  );
   liveStatsRef.current = {
     score,
     accuracy: liveAccuracy,
@@ -991,11 +1087,52 @@ export default function MultiplayerPage() {
   useEffect(() => {
     if (
       startedAt &&
+      !localFinished &&
+      !submittedRef.current &&
       lobby?.duration_ms &&
       wallPosition >= lobby.duration_ms - 100
-    )
-      void finish(undefined, false);
-  }, [finish, lobby?.duration_ms, startedAt, wallPosition]);
+    ) {
+      const remainingPartialPoints = allLinesComplete
+        ? 0
+        : partialLinePoints(normalizedTyped, target);
+      const missedAtEnd =
+        !allLinesComplete && multiplayerLinePolicy(gameMode).penalizeMissed
+          ? 1
+          : 0;
+      if (remainingPartialPoints)
+        setScore((value) => value + remainingPartialPoints);
+      if (missedAtEnd) {
+        setMistakes((value) => value + missedAtEnd);
+        setCombo(0);
+      }
+      if (!allLinesComplete)
+        showLineFeedback(normalizedTyped ? "partial" : "missed");
+      void finish(
+        {
+          score: score + remainingPartialPoints,
+          correct,
+          mistakes: mistakes + missedAtEnd,
+          maxCombo,
+        },
+        false,
+      );
+    }
+  }, [
+    allLinesComplete,
+    correct,
+    finish,
+    gameMode,
+    lobby?.duration_ms,
+    localFinished,
+    maxCombo,
+    mistakes,
+    normalizedTyped,
+    score,
+    showLineFeedback,
+    startedAt,
+    target,
+    wallPosition,
+  ]);
 
   const typeLine = (value: string) => {
     if (!canType || !currentLine) return;
@@ -1016,18 +1153,14 @@ export default function MultiplayerPage() {
     lastTypedLength.current = normalized.length;
     setTypedLineIndex(lineIndex);
     setTyped(value);
-    if (normalized.length >= target.length) {
-      const completion = completedLineStatus(normalized, target);
-      const isCorrect = completion === "perfect";
-      const nextCombo = isCorrect ? combo + 1 : 0;
+    if (shouldCompleteLine(normalized, target)) {
+      const nextCombo = combo + 1;
       setCombo(nextCombo);
-      if (isCorrect) setMaxCombo((old) => Math.max(old, nextCombo));
-      const matching = countPositionalMatches(normalized, target);
-      const linePoints = isCorrect
-        ? target.length * 10 + 300 + Math.min(900, nextCombo * 30)
-        : matching * 6;
+      setMaxCombo((old) => Math.max(old, nextCombo));
+      const linePoints =
+        target.length * 10 + 300 + Math.min(900, nextCombo * 30);
       setScore((old) => old + linePoints);
-      showLineFeedback(isCorrect ? "correct" : "partial");
+      showLineFeedback("correct");
       setTyped("");
       lastTypedLength.current = 0;
       lastLineRef.current = lineIndex + 1;
@@ -1383,7 +1516,7 @@ export default function MultiplayerPage() {
                         {countdown}
                       </b>
                       <p className="mt-4 text-sm text-amber-200">
-                        Presioná Play en Spotify durante la cuenta regresiva.
+                        Spotify se está preparando y comenzará automáticamente.
                       </p>
                     </div>
                   </div>
@@ -1429,11 +1562,17 @@ export default function MultiplayerPage() {
                       <p
                         className={`mb-6 mt-12 text-sm uppercase tracking-[.3em] ${canType ? "text-cyan-300" : "text-zinc-600"}`}
                       >
-                        {canType
-                          ? "Escribí ahora"
-                          : currentLine
-                            ? `La voz entra en ${(lineWaitMs / 1000).toFixed(1)} s`
-                            : "Canción completada"}
+                        {allLinesComplete
+                          ? "Letra completada · la canción continúa hasta el final"
+                          : playbackBuffering
+                            ? "Spotify está cargando"
+                            : playbackPaused && singerStarted
+                              ? "Spotify está pausado"
+                              : canType
+                                ? "Escribí ahora"
+                                : currentLine
+                                  ? `La voz entra en ${(lineWaitMs / 1000).toFixed(1)} s`
+                                  : "Canción completada"}
                       </p>
                       <div
                         className={`min-h-24 text-3xl font-bold leading-relaxed transition-opacity ${!canType ? "opacity-35" : "opacity-100"}`}
@@ -1476,7 +1615,7 @@ export default function MultiplayerPage() {
                       <p className="mt-8 text-xl text-zinc-600">
                         {lyrics[lineIndex + 1]?.words || "Último verso"}
                       </p>
-                      {!canType && currentLine && (
+                      {!canType && currentLine && !allLinesComplete && (
                         <div className="mx-auto mt-6 h-1.5 max-w-xs overflow-hidden rounded-full bg-white/10">
                           <div
                             className="h-full animate-pulse bg-cyan-300"

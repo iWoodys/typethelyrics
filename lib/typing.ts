@@ -7,3 +7,15 @@ export function countPositionalMatches(attempt: string, target: string) {
 export function completedLineStatus(attempt: string, target: string) {
   return attempt === target ? "perfect" : "partial";
 }
+
+export function shouldCompleteLine(attempt: string, target: string) {
+  return attempt === target;
+}
+
+export function partialLinePoints(
+  attempt: string,
+  target: string,
+  pointsPerCharacter = 3,
+) {
+  return countPositionalMatches(attempt, target) * pointsPerCharacter;
+}

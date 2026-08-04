@@ -64,6 +64,7 @@ import {
   MODE_INFO,
   normalizeText,
   rankFor,
+  shouldPauseEasyMode,
 } from "@/lib/game";
 import { supabase } from "@/lib/supabase";
 import { validateSyncedLyrics } from "@/lib/lyrics";
@@ -75,8 +76,8 @@ import {
   scaleLyricsToPlayback,
 } from "@/lib/synchronization";
 import {
-  completedLineStatus,
-  countPositionalMatches,
+  partialLinePoints,
+  shouldCompleteLine,
 } from "@/lib/typing";
 
 type SongCard = {
@@ -166,7 +167,7 @@ const GUIDE_STEPS = [
   { title: "1. Elegí una canción", text: "Buscala por nombre o pegá un enlace de una canción de Spotify. Para playlists, conectá Spotify: desde 2026 sólo se permiten playlists propias o colaborativas." },
   { title: "2. Iniciá la reproducción", text: "Pulsá Play dentro de Spotify y después Iniciar partida. Si la canción tiene una introducción larga, la escritura permanecerá bloqueada hasta que realmente empiece la primera voz." },
   { title: "3. Escribí cuando se ilumine", text: "Cuando aparezca «Escribí ahora», usá el teclado directamente. Entre versos el juego espera; si Spotify está pausado, la pantalla te lo indicará." },
-  { title: "4. Corregí la sincronización", text: "Si falla una sola canción, usá «Calibrar canción». Si todas se escuchan adelantadas o atrasadas en tu equipo, usá «Sincronizar mi dispositivo» una vez y el ajuste también se aplicará al multijugador." },
+  { title: "4. Corregí la sincronización", text: "Si falla una sola canción, usá «Buscar mejor sincronización» para volver a elegir la mejor letra disponible. Si todas se escuchan adelantadas o atrasadas en tu equipo, usá «Sincronizar mi dispositivo» una vez; ese ajuste también se aplicará al multijugador." },
 ];
 
 export default function Home() {
@@ -251,6 +252,15 @@ export default function Home() {
   const pausedAtRef = useRef<number | null>(null);
   const pausedTotalRef = useRef(0);
   const pausedForTypingRef = useRef(false);
+  const startPlaybackTimerRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (startPlaybackTimerRef.current !== null)
+        window.clearTimeout(startPlaybackTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     const read = <T,>(key: string, fallback: T): T => {
@@ -601,14 +611,13 @@ export default function Home() {
           noPunctuation,
         );
         const attempt = offsetIndex === 0 ? normalizedTyped : "";
-        const matching =
-          offsetIndex === 0 ? countPositionalMatches(attempt, expected) : 0;
         return {
           index,
           text: lyrics[index]?.words || "",
           typed: attempt,
           status: (attempt ? "partial" : "missed") as LineResult["status"],
-          points: matching * 3,
+          points:
+            offsetIndex === 0 ? partialLinePoints(attempt, expected) : 0,
           errors: offsetIndex === 0 ? currentLineErrors : 0,
         };
       });
@@ -658,21 +667,25 @@ export default function Home() {
         lowercase,
         noPunctuation,
       );
-      const matching =
-        index === lineIndex ? countPositionalMatches(attempt, expected) : 0;
       return [
         {
           index,
           text: line.words,
           typed: attempt,
           status: (attempt ? "partial" : "missed") as LineResult["status"],
-          points: matching * 3,
+          points:
+            index === lineIndex ? partialLinePoints(attempt, expected) : 0,
           errors: index === lineIndex ? currentLineErrors : 0,
         },
       ];
     });
     addLineResults(remaining);
-    finishGame(undefined, false);
+    finishGame(
+      mode === "relaxed"
+        ? undefined
+        : { mistakes: mistakes + remaining.length },
+      false,
+    );
   }, [
     addLineResults,
     currentLineErrors,
@@ -682,6 +695,7 @@ export default function Home() {
     lowercase,
     lyrics,
     mode,
+    mistakes,
     noPunctuation,
     normalizedTyped,
     position,
@@ -690,13 +704,18 @@ export default function Home() {
   ]);
   useEffect(() => {
     if (
-      started &&
-      mode === "relaxed" &&
       current &&
-      effectivePosition >
-        (lyrics[lineIndex + 1]?.startTimeMs || current.startTimeMs + 6000) +
-          1200 &&
-      normalizedTyped !== target
+      shouldPauseEasyMode({
+        mode,
+        started,
+        playing,
+        allLinesComplete,
+        effectivePosition,
+        nextLineStart:
+          lyrics[lineIndex + 1]?.startTimeMs || current.startTimeMs + 6000,
+        attempt: normalizedTyped,
+        target,
+      })
     ) {
       sendPlayer("pause");
       pausedForTypingRef.current = true;
@@ -704,11 +723,13 @@ export default function Home() {
     }
   }, [
     current,
+    allLinesComplete,
     effectivePosition,
     lineIndex,
     lyrics,
     mode,
     normalizedTyped,
+    playing,
     sendPlayer,
     started,
     target,
@@ -716,6 +737,10 @@ export default function Home() {
 
   const resetGame = useCallback(
     () => {
+      if (startPlaybackTimerRef.current !== null) {
+        window.clearTimeout(startPlaybackTimerRef.current);
+        startPlaybackTimerRef.current = null;
+      }
       setLineIndex(0);
       setTypedLineIndex(0);
       setTyped("");
@@ -738,12 +763,29 @@ export default function Home() {
     },
     [],
   );
+  const resetGameAndPlayback = useCallback(() => {
+    resetGame();
+    sendPlayer("restart");
+    setPosition(0);
+    setPlaying(false);
+    setBuffering(false);
+    startPlaybackTimerRef.current = window.setTimeout(() => {
+      startPlaybackTimerRef.current = null;
+      sendPlayer("pause");
+    }, 180);
+  }, [resetGame, sendPlayer]);
   const beginGame = () => {
     resetGame();
     setStarted(true);
-    setStartedAt(Date.now());
-    setTimeout(() => inputRef.current?.focus(), 50);
-    sendPlayer("play");
+    setPosition(0);
+    setPlaying(false);
+    sendPlayer("restart");
+    startPlaybackTimerRef.current = window.setTimeout(() => {
+      startPlaybackTimerRef.current = null;
+      setStartedAt(Date.now());
+      sendPlayer("play");
+      window.setTimeout(() => inputRef.current?.focus(), 50);
+    }, 180);
   };
   const startGame = () => {
     if (!localStorage.getItem(LS.spotifyNotice)) {
@@ -784,22 +826,18 @@ export default function Home() {
     lastTypedLength.current = nextTyped.length;
     setTypedLineIndex(lineIndex);
     setTyped(value);
-    if (nextTyped.length >= target.length) {
-      const completion = completedLineStatus(nextTyped, target);
-      const isCorrect = completion === "perfect";
-      const nextCombo = isCorrect ? combo + 1 : 0;
+    if (shouldCompleteLine(nextTyped, target)) {
+      const nextCombo = combo + 1;
       const multiplier = Math.min(4, 1 + Math.floor(nextCombo / 5));
       const deadline =
         lyrics[lineIndex + 1]?.startTimeMs || current.startTimeMs + 6000;
-      const timingBonus = isCorrect && effectivePosition <= deadline ? 300 : 0;
+      const timingBonus = effectivePosition <= deadline ? 300 : 0;
       const status: LineResult["status"] =
-        isCorrect && totalLineErrors > 0 ? "corrected" : completion;
-      const matching = countPositionalMatches(nextTyped, target);
-      const points = isCorrect
-        ? (status === "perfect" ? target.length * 15 : target.length * 10) *
-            multiplier +
-          timingBonus
-        : matching * 6;
+        totalLineErrors > 0 ? "corrected" : "perfect";
+      const points =
+        (status === "perfect" ? target.length * 15 : target.length * 10) *
+          multiplier +
+        timingBonus;
       addLineResults([
         {
           index: lineIndex,
@@ -810,10 +848,10 @@ export default function Home() {
           errors: totalLineErrors,
         },
       ]);
-      showLineFeedback(isCorrect ? "correct" : "partial");
+      showLineFeedback("correct");
       setScore((count) => count + points);
       setCombo(nextCombo);
-      if (isCorrect) setMaxCombo((count) => Math.max(count, nextCombo));
+      setMaxCombo((count) => Math.max(count, nextCombo));
       setTyped("");
       setCurrentLineErrors(0);
       lastTypedLength.current = 0;
@@ -907,7 +945,7 @@ export default function Home() {
       setLyricsSource(data.lyricsSource);
       setLyricsOrigin(loadedOrigin);
       setSyncMessage(automaticCalibration
-        ? `Sincronización inteligente aplicada (${loadedOrigin === "community" ? "corregida por administración" : `${data.syncAdjustment?.confidence || "medium"}, escala ${selectedScale.toFixed(5)}`}).`
+        ? `Se eligió la mejor sincronización disponible (${loadedOrigin === "community" ? "corregida por administración" : `LRCLIB, confianza ${data.syncAdjustment?.confidence || "medium"}`}).`
         : "");
       if (!loadedLyrics?.length)
         throw new Error("Esta canción no tiene letras sincronizadas disponibles.");
@@ -1029,10 +1067,18 @@ export default function Home() {
     const originals = readStoredJson<Record<string, boolean>>(LS.originals, {});
     originals[trackId] = true;
     writeStoredJson(LS.originals, originals);
+    const offsets = readStoredJson<Record<string, number>>(LS.offsets, {});
+    const profiles = readStoredJson<Record<string, SyncProfile>>(LS.syncProfiles, {});
+    delete offsets[trackId];
+    delete profiles[trackId];
+    writeStoredJson(LS.offsets, offsets);
+    writeStoredJson(LS.syncProfiles, profiles);
+    setOffset(0);
     setLyrics(sourceLyrics);
     setDraftLyrics(sourceLyrics);
     setLyricsOrigin("LRCLIB");
     setTimeScale(sourceTimeScale);
+    resetGameAndPlayback();
     setSyncMessage("Se restauró la sincronización original de LRCLIB.");
     const { data } = await supabase.auth.getUser();
     if (data.user)
@@ -1092,8 +1138,18 @@ export default function Home() {
   };
 
   const resetLatency = () => {
+    if (trackId) {
+      const offsets = readStoredJson<Record<string, number>>(LS.offsets, {});
+      const profiles = readStoredJson<Record<string, SyncProfile>>(LS.syncProfiles, {});
+      delete offsets[trackId];
+      delete profiles[trackId];
+      writeStoredJson(LS.offsets, offsets);
+      writeStoredJson(LS.syncProfiles, profiles);
+    }
     setOffset(0);
-    setTimeScale(1);
+    setTimeScale(sourceTimeScale);
+    resetGameAndPlayback();
+    setSyncMessage("Se borró el ajuste personal de esta canción.");
   };
 
   const beginDeviceCalibration = () => {
@@ -1416,12 +1472,13 @@ export default function Home() {
                       {(Object.keys(MODE_INFO) as GameMode[]).map((key) => (
                         <button
                           key={key}
+                          disabled={started}
                           onClick={() => {
                             setMode(key);
-                            resetGame();
+                            resetGameAndPlayback();
                           }}
                           title={MODE_INFO[key].description}
-                          className={`rounded-lg border px-3 py-2 text-left text-sm ${mode === key ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/5 bg-black/20 text-zinc-400"}`}
+                          className={`rounded-lg border px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50 ${mode === key ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/5 bg-black/20 text-zinc-400"}`}
                         >
                           {MODE_INFO[key].name}
                         </button>
@@ -1489,22 +1546,24 @@ export default function Home() {
                     )}
                     <div className="absolute right-4 top-4 z-10 flex flex-wrap justify-end gap-2">
                       <button
+                        disabled={started}
                         onClick={(event) => {
                           event.stopPropagation();
                           beginDeviceCalibration();
                         }}
-                        className="flex items-center gap-2 rounded-lg bg-violet-400/15 px-3 py-2 text-xs font-bold text-violet-200"
+                        className="flex items-center gap-2 rounded-lg bg-violet-400/15 px-3 py-2 text-xs font-bold text-violet-200 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Clock3 size={14} /> Sincronizar mi dispositivo
                       </button>
                       <button
+                        disabled={started}
                         onClick={(event) => {
                           event.stopPropagation();
                           applyAutomaticCalibration();
                         }}
-                        className="flex items-center gap-2 rounded-lg bg-cyan-400/15 px-3 py-2 text-xs font-bold text-cyan-200"
+                        className="flex items-center gap-2 rounded-lg bg-cyan-400/15 px-3 py-2 text-xs font-bold text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        <Gauge size={14} /> Calibrar canción
+                        <Gauge size={14} /> Buscar mejor sincronización
                       </button>
                     </div>
                     {deviceCalibrationOpen && (
@@ -1563,6 +1622,8 @@ export default function Home() {
                       >
                         {!started
                           ? "Prepará tus dedos"
+                          : allLinesComplete
+                            ? "Letra completada · la canción continúa hasta el final"
                           : buffering
                             ? "Spotify está cargando · esperá un momento"
                           : !playing
@@ -1615,7 +1676,7 @@ export default function Home() {
                       <p className="mt-8 text-xl text-zinc-600">
                         {lyrics[lineIndex + 1]?.words || "Último verso"}
                       </p>
-                      {started && !canType && (
+                      {started && !canType && !allLinesComplete && (
                         <div className="mx-auto mt-6 h-1.5 max-w-xs overflow-hidden rounded-full bg-white/10">
                           <div
                             className="h-full animate-pulse bg-cyan-300"
@@ -1655,7 +1716,7 @@ export default function Home() {
                         {playing ? "Pausar" : "Reproducir"}
                       </button>
                       <button
-                        onClick={() => resetGame()}
+                        onClick={resetGameAndPlayback}
                         className="rounded-xl border border-white/10 bg-white/5 p-3"
                         title="Reiniciar"
                       >
@@ -1664,11 +1725,12 @@ export default function Home() {
                     </div>
                     <div className="flex gap-2">
                       <button
+                        disabled={started}
                         onClick={() => {
                           setDraftLyrics(lyrics);
                           setEditorOpen(true);
                         }}
-                        className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm"
+                        className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Edit3 size={17} /> Editar sincronización
                       </button>
@@ -1684,27 +1746,35 @@ export default function Home() {
                   </div>
                   <div className="flex flex-wrap gap-2 text-xs">
                     <button
+                      disabled={started || mode === "expert"}
                       onClick={() => setLowercase((v) => !v)}
-                      className={`rounded-full px-3 py-2 ${lowercase ? "bg-violet-500/20 text-violet-300" : "bg-white/5 text-zinc-500"}`}
+                      title={mode === "expert" ? "En Difícil las mayúsculas son obligatorias" : undefined}
+                      className={`rounded-full px-3 py-2 disabled:cursor-not-allowed disabled:opacity-40 ${mode !== "expert" && lowercase ? "bg-violet-500/20 text-violet-300" : "bg-white/5 text-zinc-500"}`}
                     >
-                      Ignorar mayúsculas
+                      {mode === "expert"
+                        ? "Mayúsculas obligatorias"
+                        : "Ignorar mayúsculas"}
                     </button>
                     <button
+                      disabled={started || mode === "expert"}
                       onClick={() => setNoPunctuation((v) => !v)}
-                      className={`rounded-full px-3 py-2 ${noPunctuation ? "bg-violet-500/20 text-violet-300" : "bg-white/5 text-zinc-500"}`}
+                      title={mode === "expert" ? "En Difícil la puntuación es obligatoria" : undefined}
+                      className={`rounded-full px-3 py-2 disabled:cursor-not-allowed disabled:opacity-40 ${mode !== "expert" && noPunctuation ? "bg-violet-500/20 text-violet-300" : "bg-white/5 text-zinc-500"}`}
                     >
-                      Ignorar puntuación
+                      {mode === "expert"
+                        ? "Puntuación obligatoria"
+                        : "Ignorar puntuación"}
                     </button>
                     <button
                       onClick={resetLatency}
-                      disabled={offset === 0 && timeScale === 1}
+                      disabled={started || (offset === 0 && timeScale === sourceTimeScale)}
                       className="flex items-center gap-1 rounded-full bg-white/5 px-3 py-2 text-zinc-300 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      <RotateCcw size={14} /> Borrar calibración
+                      <RotateCcw size={14} /> Borrar ajuste de canción
                     </button>
                     <button
                       onClick={() => void restoreOriginalLyrics()}
-                      disabled={lyricsOrigin === "LRCLIB"}
+                      disabled={started || lyricsOrigin === "LRCLIB"}
                       className="flex items-center gap-1 rounded-full bg-white/5 px-3 py-2 text-zinc-300 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <Undo2 size={14} /> Restaurar letra original
@@ -1981,7 +2051,7 @@ export default function Home() {
             <button
               onClick={() => {
                 setResult(null);
-                resetGame();
+                resetGameAndPlayback();
               }}
               className="mt-6 w-full rounded-xl bg-white py-3 font-bold text-black"
             >

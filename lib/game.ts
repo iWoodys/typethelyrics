@@ -77,6 +77,35 @@ export const multiplayerLinePolicy = (mode: GameMode) => ({
   penalizeMissed: mode !== "relaxed",
 });
 
+export function shouldPauseEasyMode({
+  mode,
+  started,
+  playing,
+  allLinesComplete,
+  effectivePosition,
+  nextLineStart,
+  attempt,
+  target,
+}: {
+  mode: GameMode;
+  started: boolean;
+  playing: boolean;
+  allLinesComplete: boolean;
+  effectivePosition: number;
+  nextLineStart: number;
+  attempt: string;
+  target: string;
+}) {
+  return (
+    mode === "relaxed" &&
+    started &&
+    playing &&
+    !allLinesComplete &&
+    attempt !== target &&
+    effectivePosition >= Math.max(0, nextLineStart - 200)
+  );
+}
+
 export const normalizeText = (
   value: string,
   expert: boolean,

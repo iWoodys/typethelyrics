@@ -40,3 +40,13 @@ export function scaleLyricsToPlayback(
     startTimeMs: Math.max(0, Math.round(line.startTimeMs * normalizedScale)),
   }));
 }
+
+export type MultiplayerPlaybackPhase = "prepare" | "play" | "started";
+
+export function multiplayerPlaybackPhase(
+  remainingMs: number,
+): MultiplayerPlaybackPhase {
+  if (remainingMs > 150) return "prepare";
+  if (remainingMs > 0) return "play";
+  return "started";
+}

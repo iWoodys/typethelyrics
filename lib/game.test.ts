@@ -6,6 +6,7 @@ import {
   normalizeGameMode,
   normalizeText,
   rankFor,
+  shouldPauseEasyMode,
 } from "./game";
 
 describe("normalizeText",()=>{
@@ -41,5 +42,37 @@ describe("multiplayerLinePolicy", () => {
   it("convierte modos inválidos a Normal", () => {
     expect(normalizeGameMode("removed-mode")).toBe("rhythm");
     expect(normalizeGameMode("expert")).toBe("expert");
+  });
+});
+
+describe("modo Fácil", () => {
+  it("pausa antes del siguiente verso si la frase sigue incompleta", () => {
+    expect(
+      shouldPauseEasyMode({
+        mode: "relaxed",
+        started: true,
+        playing: true,
+        allLinesComplete: false,
+        effectivePosition: 9_800,
+        nextLineStart: 10_000,
+        attempt: "hol",
+        target: "hola",
+      }),
+    ).toBe(true);
+  });
+
+  it("no pausa después de completar el último verso", () => {
+    expect(
+      shouldPauseEasyMode({
+        mode: "relaxed",
+        started: true,
+        playing: true,
+        allLinesComplete: true,
+        effectivePosition: 20_000,
+        nextLineStart: 10_000,
+        attempt: "",
+        target: "hola",
+      }),
+    ).toBe(false);
   });
 });
