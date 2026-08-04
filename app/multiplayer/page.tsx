@@ -43,9 +43,8 @@ import {
   scaleLyricsToPlayback,
 } from "@/lib/synchronization";
 import {
-  completedLineStatus,
-  countPositionalMatches,
-  isAppendOnlyInput,
+  applyWordTypingKey,
+  countSuccessfulCharacters,
 } from "@/lib/typing";
 import {
   SpotifyEmbed,
@@ -176,6 +175,7 @@ export default function MultiplayerPage() {
   const [maxCombo, setMaxCombo] = useState(0);
   const [correct, setCorrect] = useState(0);
   const [mistakes, setMistakes] = useState(0);
+  const [failedWords, setFailedWords] = useState<number[]>([]);
   const [lives, setLives] = useState(3);
   const [startedAt, setStartedAt] = useState(0);
   const [clock, setClock] = useState(Date.now());
@@ -190,6 +190,7 @@ export default function MultiplayerPage() {
   const submittedRef = useRef(false);
   const lastLineRef = useRef(0);
   const lastTypedLength = useRef(0);
+  const lockedTypedLength = useRef(0);
   const lastProgressRef = useRef("");
   const publishingProgressRef = useRef(false);
   const audioReadySentRef = useRef<boolean | null>(null);
@@ -680,11 +681,13 @@ export default function MultiplayerPage() {
     setMaxCombo(0);
     setCorrect(0);
     setMistakes(0);
+    setFailedWords([]);
     setLives(3);
     submittedRef.current = false;
     lastProgressRef.current = "";
     lastLineRef.current = 0;
     lastTypedLength.current = 0;
+    lockedTypedLength.current = 0;
     await loadRoom(lobby.id);
     setWorking(false);
   };
@@ -728,6 +731,9 @@ export default function MultiplayerPage() {
         setLineIndex(0);
         setTypedLineIndex(0);
         setTyped("");
+        setFailedWords([]);
+        lastTypedLength.current = 0;
+        lockedTypedLength.current = 0;
         setLineFeedback(null);
         setAllLinesComplete(false);
         setStartedAt(new Date(lobby.start_at!).getTime());
@@ -874,10 +880,12 @@ export default function MultiplayerPage() {
       setCombo(0);
     }
     setTyped("");
+    setFailedWords([]);
     setTypedLineIndex(timedIndex);
     setLineIndex(timedIndex);
     showLineFeedback(normalizedTyped ? "partial" : "missed");
     lastTypedLength.current = 0;
+    lockedTypedLength.current = 0;
     lastLineRef.current = timedIndex;
     if (gameMode === "survival")
       setLives((value) => Math.max(0, value - missed));
@@ -998,42 +1006,61 @@ export default function MultiplayerPage() {
       void finish(undefined, false);
   }, [finish, lobby?.duration_ms, startedAt, wallPosition]);
 
-  const typeLine = (value: string) => {
+  const typeLineKey = (key: string) => {
     if (!canType || !currentLine) return;
-    if (!isAppendOnlyInput(visibleTyped, value)) return;
-    const normalized = normalizeText(value, gameMode === "expert", true, false);
-    let addedCorrect = 0;
-    let addedMistakes = 0;
-    if (normalized.length > lastTypedLength.current) {
-      for (let at = lastTypedLength.current; at < normalized.length; at += 1) {
-        if (normalized[at] === target[at]) addedCorrect += 1;
-        else addedMistakes += 1;
-      }
-      if (addedCorrect) setCorrect((old) => old + addedCorrect);
-      if (addedMistakes) {
-        setMistakes((old) => old + addedMistakes);
-        setCombo(0);
-        if (gameMode === "survival")
-          setLives((currentLives) => Math.max(0, currentLives - addedMistakes));
-      }
+    if (key === "Backspace") {
+      if (visibleTyped.length <= lockedTypedLength.current) return;
+      const nextTyped = visibleTyped.slice(0, -1);
+      setTyped(nextTyped);
+      lastTypedLength.current = nextTyped.length;
+      setCorrect((value) => Math.max(0, value - 1));
+      return;
     }
-    lastTypedLength.current = normalized.length;
+
+    const normalizedKey =
+      key === " "
+        ? " "
+        : normalizeText(key, gameMode === "expert", true, false);
+    if ([...normalizedKey].length !== 1) return;
+
+    const outcome = applyWordTypingKey(
+      visibleTyped,
+      target,
+      failedWords,
+      normalizedKey,
+    );
+    if (outcome.typed === visibleTyped) return;
+    if (outcome.correctDelta)
+      setCorrect((value) => Math.max(0, value + outcome.correctDelta));
+    if (outcome.mistakeDelta) {
+      setMistakes((value) => value + outcome.mistakeDelta);
+      setCombo(0);
+      if (gameMode === "survival")
+        setLives((currentLives) => Math.max(0, currentLives - 1));
+    }
+    if (outcome.wordFailed)
+      lockedTypedLength.current = outcome.lockedLength;
+    const nextFailedWords = outcome.failedWords;
+    setFailedWords(nextFailedWords);
+    lastTypedLength.current = outcome.typed.length;
     setTypedLineIndex(lineIndex);
-    setTyped(value);
-    if (normalized.length >= target.length) {
-      const completion = completedLineStatus(normalized, target);
-      const isCorrect = completion === "perfect";
+    setTyped(outcome.typed);
+
+    if (outcome.completed) {
+      const isCorrect = nextFailedWords.length === 0;
       const nextCombo = isCorrect ? combo + 1 : 0;
       setCombo(nextCombo);
       if (isCorrect) setMaxCombo((old) => Math.max(old, nextCombo));
-      const matching = countPositionalMatches(normalized, target);
+      const matching = countSuccessfulCharacters(target, nextFailedWords);
       const linePoints = isCorrect
         ? target.length * 10 + 300 + Math.min(900, nextCombo * 30)
         : matching * 6;
       setScore((old) => old + linePoints);
       showLineFeedback(isCorrect ? "correct" : "partial");
       setTyped("");
+      setFailedWords([]);
       lastTypedLength.current = 0;
+      lockedTypedLength.current = 0;
       lastLineRef.current = lineIndex + 1;
       if (lineIndex >= lyrics.length - 1) setAllLinesComplete(true);
       else {
@@ -1473,7 +1500,9 @@ export default function MultiplayerPage() {
                                   <span
                                     key={charIndex}
                                     className={
-                                      actual == null
+                                      failedWords.includes(wordIndex)
+                                        ? "rounded bg-red-500/30 text-red-300"
+                                        : actual == null
                                         ? "text-zinc-300"
                                         : actual === expected
                                           ? "text-emerald-400"
@@ -1504,15 +1533,23 @@ export default function MultiplayerPage() {
                         key={lineIndex}
                         ref={inputRef}
                         value={visibleTyped}
-                        onChange={(event) => typeLine(event.target.value)}
+                        readOnly
                         onPaste={(event) => event.preventDefault()}
                         onKeyDown={(event) => {
                           if (
                             ["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Home"].includes(
                               event.key,
                             )
-                          )
+                          ) {
                             event.preventDefault();
+                            if (event.key === "Backspace")
+                              typeLineKey(event.key);
+                            return;
+                          }
+                          if (event.key.length === 1) {
+                            event.preventDefault();
+                            typeLineKey(event.key);
+                          }
                         }}
                         disabled={!canType}
                         className="absolute inset-0 opacity-0"

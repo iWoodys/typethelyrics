@@ -75,9 +75,10 @@ import {
   scaleLyricsToPlayback,
 } from "@/lib/synchronization";
 import {
-  completedLineStatus,
-  countPositionalMatches,
-  isAppendOnlyInput,
+  applyWordTypingKey,
+  countSuccessfulCharacters,
+  countSuccessfulTypedCharacters,
+  formatFailedWords,
 } from "@/lib/typing";
 
 type SongCard = {
@@ -204,6 +205,7 @@ export default function Home() {
   const [correct, setCorrect] = useState(0);
   const [mistakes, setMistakes] = useState(0);
   const [currentLineErrors, setCurrentLineErrors] = useState(0);
+  const [failedWords, setFailedWords] = useState<number[]>([]);
   const [lives, setLives] = useState(3);
   const [startedAt, setStartedAt] = useState(0);
   const [result, setResult] = useState<Result | null>(null);
@@ -248,6 +250,7 @@ export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const spotifyRef = useRef<SpotifyEmbedHandle>(null);
   const lastTypedLength = useRef(0);
+  const lockedTypedLength = useRef(0);
   const feedbackTimer = useRef<number | null>(null);
   const lineResultsRef = useRef<LineResult[]>([]);
   const pausedAtRef = useRef<number | null>(null);
@@ -604,13 +607,17 @@ export default function Home() {
           noPunctuation,
         );
         const attempt = offsetIndex === 0 ? normalizedTyped : "";
-        const matching = [...attempt].filter(
-          (char, charIndex) => char === expected[charIndex],
-        ).length;
+        const matching =
+          offsetIndex === 0
+            ? countSuccessfulTypedCharacters(attempt, expected, failedWords)
+            : 0;
         return {
           index,
           text: lyrics[index]?.words || "",
-          typed: attempt,
+          typed:
+            offsetIndex === 0 && failedWords.length
+              ? formatFailedWords(expected, failedWords).slice(0, attempt.length)
+              : attempt,
           status: (attempt ? "partial" : "missed") as LineResult["status"],
           points: matching * 3,
           errors: offsetIndex === 0 ? currentLineErrors : 0,
@@ -626,14 +633,17 @@ export default function Home() {
       setCombo(0);
       setTyped("");
       setCurrentLineErrors(0);
+      setFailedWords([]);
       setTypedLineIndex(timedIndex);
       setLineIndex(timedIndex);
       lastTypedLength.current = 0;
+      lockedTypedLength.current = 0;
       if (mode === "survival") setLives((value) => Math.max(0, value - missed));
     }
   }, [
     addLineResults,
     currentLineErrors,
+    failedWords,
     lowercase,
     lineIndex,
     lyrics,
@@ -666,14 +676,18 @@ export default function Home() {
         lowercase,
         noPunctuation,
       );
-      const matching = [...attempt].filter(
-        (char, charIndex) => char === expected[charIndex],
-      ).length;
+      const matching =
+        index === lineIndex
+          ? countSuccessfulTypedCharacters(attempt, expected, failedWords)
+          : 0;
       return [
         {
           index,
           text: line.words,
-          typed: attempt,
+          typed:
+            index === lineIndex && failedWords.length
+              ? formatFailedWords(expected, failedWords).slice(0, attempt.length)
+              : attempt,
           status: (attempt ? "partial" : "missed") as LineResult["status"],
           points: matching * 3,
           errors: index === lineIndex ? currentLineErrors : 0,
@@ -685,6 +699,7 @@ export default function Home() {
   }, [
     addLineResults,
     currentLineErrors,
+    failedWords,
     finishGame,
     finished,
     lineIndex,
@@ -739,6 +754,7 @@ export default function Home() {
       setCorrect(0);
       setMistakes(0);
       setCurrentLineErrors(0);
+      setFailedWords([]);
       lineResultsRef.current = [];
       pausedAtRef.current = null;
       pausedTotalRef.current = 0;
@@ -749,6 +765,7 @@ export default function Home() {
       setResult(null);
       setStarted(false);
       lastTypedLength.current = 0;
+      lockedTypedLength.current = 0;
     },
     [mode, timedIndex],
   );
@@ -772,56 +789,68 @@ export default function Home() {
     beginGame();
   };
 
-  const handleTyping = (value: string) => {
+  const handleTypingKey = (key: string) => {
     if (!canType || !current) return;
-    if (!isAppendOnlyInput(visibleTyped, value)) return;
-    const nextTyped = normalizeText(
-      value,
-      mode === "expert",
-      lowercase,
-      noPunctuation,
-    );
-    let addedCorrect = 0;
-    let addedMistakes = 0;
-    if (nextTyped.length > lastTypedLength.current) {
-      for (let at = lastTypedLength.current; at < nextTyped.length; at += 1) {
-        if (nextTyped[at] === target[at]) addedCorrect += 1;
-        else addedMistakes += 1;
-      }
-      if (addedCorrect) setCorrect((count) => count + addedCorrect);
-      if (addedMistakes) {
-        setMistakes((count) => count + addedMistakes);
-        setCurrentLineErrors((count) => count + addedMistakes);
-        setCombo(0);
-        if (mode === "survival")
-          setLives((currentLives) => Math.max(0, currentLives - addedMistakes));
-      }
+    if (key === "Backspace") {
+      if (visibleTyped.length <= lockedTypedLength.current) return;
+      const nextTyped = visibleTyped.slice(0, -1);
+      setTyped(nextTyped);
+      lastTypedLength.current = nextTyped.length;
+      setCorrect((count) => Math.max(0, count - 1));
+      return;
     }
-    const totalLineErrors = currentLineErrors + addedMistakes;
-    lastTypedLength.current = nextTyped.length;
+
+    const normalizedKey =
+      key === " "
+        ? " "
+        : normalizeText(key, mode === "expert", lowercase, noPunctuation);
+    if ([...normalizedKey].length !== 1) return;
+
+    const outcome = applyWordTypingKey(
+      visibleTyped,
+      target,
+      failedWords,
+      normalizedKey,
+    );
+    if (outcome.typed === visibleTyped) return;
+
+    if (outcome.correctDelta)
+      setCorrect((count) => Math.max(0, count + outcome.correctDelta));
+    if (outcome.mistakeDelta) {
+      setMistakes((count) => count + outcome.mistakeDelta);
+      setCurrentLineErrors((count) => count + outcome.mistakeDelta);
+      setCombo(0);
+      if (mode === "survival")
+        setLives((currentLives) => Math.max(0, currentLives - 1));
+    }
+    if (outcome.wordFailed)
+      lockedTypedLength.current = outcome.lockedLength;
+    const nextFailedWords = outcome.failedWords;
+    const totalLineErrors = currentLineErrors + outcome.mistakeDelta;
+    setFailedWords(nextFailedWords);
+    lastTypedLength.current = outcome.typed.length;
     setTypedLineIndex(lineIndex);
-    setTyped(value);
-    if (nextTyped.length >= target.length) {
-      const completion = completedLineStatus(nextTyped, target);
-      const isCorrect = completion === "perfect";
+    setTyped(outcome.typed);
+
+    if (outcome.completed) {
+      const isCorrect = nextFailedWords.length === 0;
       const nextCombo = isCorrect ? combo + 1 : 0;
       const multiplier = Math.min(4, 1 + Math.floor(nextCombo / 5));
       const deadline =
         lyrics[lineIndex + 1]?.startTimeMs || current.startTimeMs + 6000;
       const timingBonus = isCorrect && effectivePosition <= deadline ? 300 : 0;
-      const status: LineResult["status"] =
-        isCorrect && totalLineErrors > 0 ? "corrected" : completion;
-      const matching = countPositionalMatches(nextTyped, target);
+      const status: LineResult["status"] = isCorrect ? "perfect" : "partial";
+      const matching = countSuccessfulCharacters(target, nextFailedWords);
       const points = isCorrect
-        ? (status === "perfect" ? target.length * 15 : target.length * 10) *
-            multiplier +
-          timingBonus
+        ? target.length * 15 * multiplier + timingBonus
         : matching * 6;
       addLineResults([
         {
           index: lineIndex,
           text: current.words,
-          typed: nextTyped,
+          typed: isCorrect
+            ? target
+            : formatFailedWords(target, nextFailedWords),
           status,
           points,
           errors: totalLineErrors,
@@ -833,7 +862,9 @@ export default function Home() {
       if (isCorrect) setMaxCombo((value) => Math.max(value, nextCombo));
       setTyped("");
       setCurrentLineErrors(0);
+      setFailedWords([]);
       lastTypedLength.current = 0;
+      lockedTypedLength.current = 0;
       if (mode === "relaxed" && (pausedForTypingRef.current || !playing)) {
         pausedForTypingRef.current = false;
         sendPlayer("play");
@@ -1620,9 +1651,11 @@ export default function Home() {
                               return (
                                 <span
                                   key={charIndex}
-                                  className={
-                                    actual == null
-                                      ? "text-zinc-300"
+                                    className={
+                                      failedWords.includes(wordIndex)
+                                        ? "rounded bg-red-500/30 text-red-300"
+                                        : actual == null
+                                        ? "text-zinc-300"
                                       : actual === expected
                                         ? "text-emerald-400"
                                         : "rounded bg-red-500/30 text-red-300"
@@ -1653,16 +1686,26 @@ export default function Home() {
                       key={lineIndex}
                       ref={inputRef}
                       value={visibleTyped}
-                      onChange={(e) => handleTyping(e.target.value)}
+                      readOnly
                       onPaste={(event) => event.preventDefault()}
                       onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-                        if (e.key === "Escape") sendPlayer("pause");
+                        if (e.key === "Escape") {
+                          sendPlayer("pause");
+                          return;
+                        }
                         if (
                           ["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Home"].includes(
                             e.key,
                           )
-                        )
+                        ) {
                           e.preventDefault();
+                          if (e.key === "Backspace") handleTypingKey(e.key);
+                          return;
+                        }
+                        if (e.key.length === 1) {
+                          e.preventDefault();
+                          handleTypingKey(e.key);
+                        }
                       }}
                       disabled={!canType}
                       className="pointer-events-none absolute inset-0 opacity-0"
