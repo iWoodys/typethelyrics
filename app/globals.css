@@ -31,6 +31,56 @@ html[data-mobile-site="true"] select {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+.mobile-game-shell {
+  min-height: var(--mobile-viewport-height, 100dvh);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.mobile-game-stage {
+  min-height: calc(var(--mobile-viewport-height, 100dvh) - env(safe-area-inset-bottom));
+}
+
+.mobile-background-player {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 320px;
+  height: 180px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+html[data-mobile-keyboard="true"] .mobile-game-stage {
+  min-height: var(--mobile-viewport-height, 100dvh);
+}
+
+html[data-mobile-keyboard="true"] .mobile-typing-card {
+  min-height: 0;
+}
+
+html[data-mobile-site="true"] .mobile-scrollbar-none {
+  scrollbar-width: none;
+}
+
+html[data-mobile-site="true"] .mobile-scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 767px), (prefers-reduced-motion: reduce) {
+  html[data-mobile-site="true"] .mobile-game-shell *,
+  html[data-mobile-site="true"] .mobile-game-shell *::before,
+  html[data-mobile-site="true"] .mobile-game-shell *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 80ms !important;
+  }
+
+  html[data-mobile-site="true"] .mobile-game-shell {
+    background-image: none !important;
+  }
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

@@ -13,7 +13,9 @@ function detectMobileSite() {
 }
 
 export function useMobileSite() {
-  const [mobileSite, setMobileSite] = useState(detectMobileSite);
+  // La primera renderización debe coincidir con el servidor. El script de layout
+  // aplica el CSS móvil antes de pintar y este efecto habilita el JSX móvil luego.
+  const [mobileSite, setMobileSite] = useState(false);
 
   useEffect(() => {
     const update = () => {

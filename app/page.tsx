@@ -29,7 +29,9 @@ import {
   Keyboard,
   Medal,
   Merge,
+  Maximize2,
   MessageCircle,
+  Minimize2,
   Music2,
   Pause,
   Play,
@@ -54,6 +56,11 @@ import type {
 } from "@/components/types";
 import { GameModesModal } from "@/components/game-modes-modal";
 import { useMobileSite } from "@/components/mobile-site";
+import {
+  useFullscreenMode,
+  useMobileKeyboard,
+  useScreenWakeLock,
+} from "@/components/mobile-game";
 import {
   SpotifyEmbed,
   type SpotifyEmbedCommand,
@@ -82,6 +89,11 @@ import {
   shouldCompleteLine,
   typingAlignment,
 } from "@/lib/typing";
+import {
+  activeTypedWord,
+  mobileVersePreview,
+  mobileVerseWindow,
+} from "@/lib/mobile-game";
 
 type SongCard = {
   id: string;
@@ -260,6 +272,14 @@ export default function Home() {
   const pausedTotalRef = useRef(0);
   const pausedForTypingRef = useRef(false);
   const startPlaybackTimerRef = useRef<number | null>(null);
+  const composingRef = useRef(false);
+  const mobileGameActive = mobileSite && started && !finished;
+  const mobileKeyboardOpen = useMobileKeyboard(mobileGameActive);
+  const wakeLockActive = useScreenWakeLock(
+    mobileGameActive && playing && !buffering,
+  );
+  const { fullscreen, supported: fullscreenSupported, toggleFullscreen } =
+    useFullscreenMode();
 
   useEffect(
     () => () => {
@@ -462,6 +482,12 @@ export default function Home() {
   useEffect(() => {
     if (canType) inputRef.current?.focus();
   }, [canType, lineIndex]);
+  useEffect(() => {
+    if (!mobileKeyboardOpen || !mobileGameActive) return;
+    window.requestAnimationFrame(() =>
+      inputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }),
+    );
+  }, [canType, lineIndex, mobileGameActive, mobileKeyboardOpen]);
   const showLineFeedback = useCallback(
     (type: "correct" | "partial" | "missed") => {
     setLineFeedback(type);
@@ -501,6 +527,14 @@ export default function Home() {
     );
     return Math.floor(ratio * current.words.split(/\s+/).length);
   }, [current, lyrics, lineIndex, effectivePosition]);
+  const currentDisplayText = noPunctuation ? target : current?.words || "";
+  const mobileFocusWord = normalizedTyped
+    ? activeTypedWord(normalizedTyped)
+    : currentWord;
+  const currentMobileVerse = useMemo(
+    () => mobileVerseWindow(currentDisplayText, mobileFocusWord, 5),
+    [currentDisplayText, mobileFocusWord],
+  );
 
   const finishGame = useCallback((finalStats?: {
     correct?: number;
@@ -1275,10 +1309,10 @@ export default function Home() {
 
   return (
     <main
-      className={`min-h-screen text-white selection:bg-fuchsia-500/40 ${highContrast ? "bg-black" : "bg-[#07080d]"} ${reducedMotion ? "[&_*]:!transition-none [&_*]:!animate-none" : ""} ${mobileSite ? "mobile-safe-bottom" : ""}`}
+      className={`${mobileGameActive ? "mobile-game-shell" : "min-h-screen"} text-white selection:bg-fuchsia-500/40 ${highContrast ? "bg-black" : "bg-[#07080d]"} ${reducedMotion ? "[&_*]:!transition-none [&_*]:!animate-none" : ""} ${mobileSite && !mobileGameActive ? "mobile-safe-bottom" : ""}`}
     >
       <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_20%_0%,rgba(124,58,237,.25),transparent_38%),radial-gradient(circle_at_85%_25%,rgba(6,182,212,.16),transparent_30%)]" />
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#07080d]/85 backdrop-blur-xl">
+      {!mobileGameActive && <header className="sticky top-0 z-40 border-b border-white/10 bg-[#07080d]/85 backdrop-blur-xl">
         <div className={`mx-auto flex max-w-7xl items-center justify-between px-4 ${mobileSite ? "py-2.5" : "py-4"}`}>
           <button
             onClick={() => setTab("play")}
@@ -1415,9 +1449,9 @@ export default function Home() {
             </Link>
           </div>
         </div>
-      </header>
+      </header>}
 
-      {mobileSite && (
+      {mobileSite && !mobileGameActive && (
         <nav className="mobile-bottom-nav fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0b0c12]/95 px-2 pt-2 backdrop-blur-xl">
           <div className="mx-auto grid max-w-lg grid-cols-5">
             {(
@@ -1454,7 +1488,7 @@ export default function Home() {
         </nav>
       )}
 
-      <div className={`relative mx-auto max-w-7xl px-4 ${mobileSite ? "py-4" : "py-8"}`}>
+      <div className={`relative mx-auto max-w-7xl ${mobileGameActive ? "mobile-game-stage p-0" : `px-4 ${mobileSite ? "py-4" : "py-8"}`}`}>
         {tab === "play" && (
           <>
             {!track && (
@@ -1476,7 +1510,7 @@ export default function Home() {
                 </p>
               </section>
             )}
-            <section className="mx-auto mb-8 max-w-4xl rounded-2xl border border-white/10 bg-white/[.04] p-4 shadow-2xl">
+            <section className={`${mobileGameActive ? "hidden" : "mx-auto mb-8 max-w-4xl rounded-2xl border border-white/10 bg-white/[.04] p-4 shadow-2xl"}`}>
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -1511,8 +1545,8 @@ export default function Home() {
             </section>
 
             {track && trackId && (
-              <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
-                <aside className="space-y-4">
+              <section className={`grid lg:grid-cols-[340px_1fr] ${mobileGameActive ? "gap-0" : "gap-5"}`}>
+                <aside className={mobileGameActive ? "mobile-background-player" : "space-y-4"}>
                   <div className={`overflow-hidden rounded-2xl border border-white/10 bg-white/[.04] p-4 ${mobileSite ? "flex items-center gap-4" : ""}`}>
                     {track.album_image && (
                       <Image
@@ -1606,10 +1640,16 @@ export default function Home() {
                   </div>
                 </aside>
 
-                <div className="space-y-4">
-                  <div className="rounded-2xl border border-white/10 bg-white/[.04] p-5">
-                    <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
-                      {[
+                <div className={mobileGameActive ? "space-y-2 p-2" : "space-y-4"}>
+                  <div className={`${mobileGameActive ? "rounded-xl p-3" : "rounded-2xl p-5"} border border-white/10 bg-white/[.04]`}>
+                    <div className={`${mobileGameActive ? "mb-2" : "mb-4"} grid grid-cols-3 gap-2 sm:grid-cols-6`}>
+                      {(mobileGameActive
+                        ? [
+                            [Trophy, score.toLocaleString(), "Puntos"],
+                            [Flame, `${combo}x`, "Combo"],
+                            [Keyboard, `${lineIndex + 1}/${lyrics.length}`, "Verso"],
+                          ]
+                        : [
                         [Trophy, score.toLocaleString(), "Puntos"],
                         [Flame, `${combo}x`, "Combo"],
                         [
@@ -1624,7 +1664,7 @@ export default function Home() {
                           "Multiplicador",
                         ],
                         [Keyboard, `${lineIndex + 1}/${lyrics.length}`, "Verso"],
-                      ].map(([Icon, value, label], i) => (
+                      ]).map(([Icon, value, label], i) => (
                         <div
                           key={i}
                           className="rounded-xl bg-black/25 p-3 text-center"
@@ -1646,11 +1686,26 @@ export default function Home() {
                         style={{ width: `${progress}%` }}
                       />
                     </div>
+                    {mobileGameActive && (
+                      <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-zinc-500">
+                        <span>{wakeLockActive ? "Pantalla activa" : "Evitando suspensión cuando sea compatible"}</span>
+                        {fullscreenSupported && (
+                          <button
+                            type="button"
+                            onClick={() => void toggleFullscreen()}
+                            className="flex items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-zinc-300"
+                          >
+                            {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                            {fullscreen ? "Salir" : "Pantalla completa"}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div
                     onClick={() => inputRef.current?.focus()}
-                    className={`relative cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] transition-all duration-200 ${mobileSite ? "min-h-[280px] p-4" : "min-h-[330px] p-6 sm:p-10"} ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
+                    className={`mobile-typing-card relative cursor-text overflow-hidden border bg-gradient-to-b from-white/[.07] to-white/[.02] transition-all duration-200 ${mobileGameActive ? `${mobileKeyboardOpen ? "min-h-0" : "min-h-[52dvh]"} rounded-2xl p-4` : mobileSite ? "min-h-[280px] rounded-3xl p-4" : "min-h-[330px] rounded-3xl p-6 sm:p-10"} ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
                   >
                     {lineFeedback && (
                       <div
@@ -1663,7 +1718,7 @@ export default function Home() {
                             : "✕ Frase incompleta"}
                       </div>
                     )}
-                    <div className={`${mobileSite ? "relative mb-4 flex justify-center" : "absolute right-4 top-4 z-10 flex flex-wrap justify-end"} gap-2`}>
+                    <div className={`${mobileGameActive ? "hidden" : mobileSite ? "relative mb-4 flex justify-center" : "absolute right-4 top-4 z-10 flex flex-wrap justify-end"} gap-2`}>
                       <button
                         disabled={started}
                         onClick={(event) => {
@@ -1759,42 +1814,57 @@ export default function Home() {
                             : `clamp(1.5rem, ${fontScale * 3.2}vw, ${fontScale * 2.7}rem)`,
                         }}
                       >
-                        {(noPunctuation ? target : current?.words || "")
-                          .split(/\s+/)
-                          .map((word, wordIndex) => (
-                          <span
-                            key={wordIndex}
-                            className={`mr-3 inline-block transition-all ${canType && wordIndex === currentWord ? "text-cyan-300 [text-shadow:0_0_22px_rgba(103,232,249,.5)]" : ""}`}
-                          >
-                            {word.split("").map((char, charIndex) => {
-                              const before =
-                                (noPunctuation ? target : current?.words || "")
-                                  .split(/\s+/)
-                                  .slice(0, wordIndex)
-                                  .join(" ").length +
-                                (wordIndex ? 1 : 0) +
-                                charIndex;
-                              const feedback = characterFeedback[before];
-                              return (
-                                <span
-                                  key={charIndex}
+                        {(mobileSite
+                          ? currentMobileVerse.words
+                          : currentDisplayText.trim().split(/\s+/).filter(Boolean)
+                        ).map((word, visibleWordIndex) => {
+                          const wordIndex = mobileSite
+                            ? currentMobileVerse.startWord + visibleWordIndex
+                            : visibleWordIndex;
+                          return (
+                            <span
+                              key={wordIndex}
+                              className={`mr-3 inline-block transition-all ${canType && wordIndex === currentWord ? "text-cyan-300 [text-shadow:0_0_22px_rgba(103,232,249,.5)]" : ""}`}
+                            >
+                              {word.split("").map((char, charIndex) => {
+                                const before =
+                                  currentDisplayText
+                                    .split(/\s+/)
+                                    .slice(0, wordIndex)
+                                    .join(" ").length +
+                                  (wordIndex ? 1 : 0) +
+                                  charIndex;
+                                const feedback = characterFeedback[before];
+                                return (
+                                  <span
+                                    key={charIndex}
                                     className={
                                       feedback === "pending"
                                         ? "text-zinc-300"
-                                      : feedback === "correct"
-                                        ? "text-emerald-400"
-                                        : "rounded bg-red-500/30 text-red-300"
-                                  }
-                                >
-                                  {char}
-                                </span>
-                              );
-                            })}
-                          </span>
-                        ))}
+                                        : feedback === "correct"
+                                          ? "text-emerald-400"
+                                          : "rounded bg-red-500/30 text-red-300"
+                                    }
+                                  >
+                                    {char}
+                                  </span>
+                                );
+                              })}
+                            </span>
+                          );
+                        })}
                       </div>
+                      {mobileSite && currentMobileVerse.totalWords > currentMobileVerse.words.length && (
+                        <p className="mt-3 text-xs font-bold uppercase tracking-widest text-zinc-600">
+                          Palabras {currentMobileVerse.startWord + 1}–{currentMobileVerse.endWord} de {currentMobileVerse.totalWords}
+                        </p>
+                      )}
                       <p className={`${mobileSite ? "mt-6 text-base" : "mt-8 text-xl"} text-zinc-600`}>
-                        {lyrics[lineIndex + 1]?.words || "Último verso"}
+                        {lyrics[lineIndex + 1]
+                          ? mobileSite
+                            ? mobileVersePreview(lyrics[lineIndex + 1].words)
+                            : lyrics[lineIndex + 1].words
+                          : "Último verso"}
                       </p>
                       {started && !canType && !allLinesComplete && (
                         <div className="mx-auto mt-6 h-1.5 max-w-xs overflow-hidden rounded-full bg-white/10">
@@ -1810,28 +1880,41 @@ export default function Home() {
                     <input
                       ref={inputRef}
                       value={visibleTyped}
-                      onChange={(event) => handleTyping(event.target.value)}
+                      onChange={(event) => {
+                        if (!composingRef.current) handleTyping(event.target.value);
+                      }}
+                      onCompositionStart={() => {
+                        composingRef.current = true;
+                      }}
+                      onCompositionEnd={(event) => {
+                        composingRef.current = false;
+                        handleTyping(event.currentTarget.value);
+                      }}
                       onPaste={(event) => event.preventDefault()}
                       onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
                         if (e.key === "Escape") {
                           sendPlayer("pause");
+                        }
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          inputRef.current?.focus();
                         }
                       }}
                       disabled={!mobileSite && !canType}
                       aria-label="Escribir la letra actual"
                       placeholder={canType ? "Escribí la frase…" : started ? "Esperá a que comience la voz…" : "Tocá aquí para preparar el teclado"}
                       className={mobileSite
-                        ? "mt-6 h-14 w-full rounded-xl border border-white/15 bg-black/35 px-4 text-base text-white outline-none placeholder:text-zinc-600 focus:border-cyan-300"
+                        ? "mobile-game-input mt-6 h-14 w-full rounded-xl border border-white/15 bg-black/35 px-4 text-base text-white outline-none placeholder:text-zinc-600 focus:border-cyan-300"
                         : "pointer-events-none absolute inset-0 opacity-0"}
                       autoComplete="off"
                       autoCapitalize="none"
                       autoCorrect="off"
                       inputMode="text"
-                      enterKeyHint="done"
+                      enterKeyHint="next"
                       spellCheck={false}
                     />
                   </div>
-                  <div className={`flex flex-wrap items-center justify-between gap-3 ${mobileSite ? "[&>div]:w-full" : ""}`}>
+                  <div className={`flex flex-wrap items-center justify-between gap-3 ${mobileGameActive ? "px-2 pb-2" : ""} ${mobileSite ? "[&>div]:w-full" : ""}`}>
                     <div className="flex gap-2">
                       <button
                         onClick={() => {
@@ -1850,7 +1933,7 @@ export default function Home() {
                         <RotateCcw size={18} />
                       </button>
                     </div>
-                    <div className="flex gap-2">
+                    <div className={mobileGameActive ? "hidden" : "flex gap-2"}>
                       <button
                         disabled={started}
                         onClick={() => {
@@ -1872,7 +1955,7 @@ export default function Home() {
                       )}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2 text-xs">
+                  <div className={mobileGameActive ? "hidden" : "flex flex-wrap gap-2 text-xs"}>
                     <button
                       disabled={started || mode === "expert"}
                       onClick={() => setLowercase((v) => !v)}
