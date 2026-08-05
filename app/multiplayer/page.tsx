@@ -24,6 +24,7 @@ import {
   Music2,
   Play,
   Radio,
+  RotateCcw,
   Search,
   Send,
   Trophy,
@@ -232,6 +233,7 @@ export default function MultiplayerPage() {
   const [playbackBuffering, setPlaybackBuffering] = useState(false);
   const [spotifyStatus, setSpotifyStatus] =
     useState<SpotifyControllerStatus>("loading");
+  const [spotifyActivated, setSpotifyActivated] = useState(false);
   const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
   const online = useOnlineStatus();
   const mobileGameActive =
@@ -240,6 +242,12 @@ export default function MultiplayerPage() {
     lobby.status !== "waiting" &&
     lobby.status !== "finished" &&
     !localFinished;
+  const spotifyRoomBlocked =
+    spotifyStatus === "loading" ||
+    spotifyStatus === "unavailable" ||
+    spotifyStatus === "preview" ||
+    (mobileSite &&
+      (spotifyStatus === "fallback" || !spotifyActivated));
   const mobileKeyboardOpen = useMobileKeyboard(mobileGameActive);
   const wakeLockActive = useScreenWakeLock(mobileGameActive && !!startedAt);
   const { fullscreen, supported: fullscreenSupported, toggleFullscreen } =
@@ -701,8 +709,16 @@ export default function MultiplayerPage() {
 
   const startLobby = async () => {
     if (!lobby) return;
-    if (spotifyStatus === "loading" || spotifyStatus === "unavailable") {
-      setError("Spotify todavía no entregó un reloj fiable en este navegador.");
+    if (spotifyRoomBlocked) {
+      setError(
+        spotifyStatus === "preview"
+          ? "Spotify sólo habilitó una vista previa. Reintentá el reproductor antes de iniciar."
+          : spotifyStatus === "fallback" && mobileSite
+            ? "El modo compatible no garantiza la canción completa en móviles. Reintentá el reproductor."
+            : mobileSite && !spotifyActivated
+              ? "Tocá Activar Spotify y esperá a escuchar la canción antes de iniciar."
+              : "Spotify todavía no entregó un reloj fiable en este navegador.",
+      );
       return;
     }
     setError("");
@@ -817,6 +833,16 @@ export default function MultiplayerPage() {
     (command: SpotifyEmbedCommand) => spotifyRef.current?.command(command),
     [],
   );
+  const activateSpotify = () => {
+    setError("");
+    spotifyRef.current?.activate();
+  };
+  const retrySpotify = () => {
+    setError("");
+    setSpotifyActivated(false);
+    setSpotifyStatus("loading");
+    spotifyRef.current?.retry();
+  };
   useEffect(() => {
     audioReadySentRef.current = null;
     countdownPreparedForRef.current = null;
@@ -830,6 +856,7 @@ export default function MultiplayerPage() {
     setPlaybackPosition(null);
     setPlaybackPaused(true);
     setPlaybackBuffering(false);
+    setSpotifyActivated(false);
   }, [lobby?.spotify_track_id]);
   const handlePlaybackUpdate = useCallback(
     (payload: SpotifyPlaybackState) => {
@@ -839,25 +866,48 @@ export default function MultiplayerPage() {
       setPlaybackBuffering(payload.isBuffering);
       setPlaybackPosition(payload.position);
       setPlaybackUpdatedAt(Date.now());
+      if (!paused) setSpotifyActivated(true);
       if (lobby.status !== "waiting") return;
-      const ready = !paused;
+      const ready =
+        !paused &&
+        spotifyStatus !== "preview" &&
+        !(mobileSite && spotifyStatus === "fallback");
       if (audioReadySentRef.current === ready) return;
       audioReadySentRef.current = ready;
       void supabase
         .rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: ready })
         .then(() => loadRoom(lobby.id));
     },
-    [lobby, loadRoom],
+    [lobby, loadRoom, mobileSite, spotifyStatus],
   );
   useEffect(() => {
-    if (!lobby || lobby.status !== "waiting" || spotifyStatus !== "fallback")
+    if (
+      !lobby ||
+      lobby.status !== "waiting" ||
+      spotifyStatus !== "fallback" ||
+      mobileSite
+    )
       return;
     if (audioReadySentRef.current === true) return;
     audioReadySentRef.current = true;
     void supabase
       .rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: true })
       .then(() => loadRoom(lobby.id));
-  }, [lobby, loadRoom, spotifyStatus]);
+  }, [lobby, loadRoom, mobileSite, spotifyStatus]);
+  useEffect(() => {
+    if (
+      !lobby ||
+      lobby.status !== "waiting" ||
+      (spotifyStatus !== "preview" &&
+        !(mobileSite && spotifyStatus === "fallback"))
+    )
+      return;
+    if (audioReadySentRef.current === false) return;
+    audioReadySentRef.current = false;
+    void supabase
+      .rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: false })
+      .then(() => loadRoom(lobby.id));
+  }, [lobby, loadRoom, mobileSite, spotifyStatus]);
   useEffect(() => {
     if (!lobby?.start_at || !["countdown", "playing"].includes(lobby.status))
       return;
@@ -1526,12 +1576,13 @@ export default function MultiplayerPage() {
         <div className={`${mobileGameActive ? "grid gap-0" : "mt-6 grid gap-5 lg:grid-cols-[1fr_320px]"}`}>
           <section className={`${mobileGameActive ? "p-2" : "rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7"}`}>
             {lobby.spotify_track_id && (
-              <div className={mobileGameActive ? "mobile-background-player" : ""}>
+              <div className={mobileGameActive ? "mobile-player-dock" : ""}>
                 <SpotifyEmbed
                   key={lobby.spotify_track_id}
                   ref={spotifyRef}
                   trackId={lobby.spotify_track_id}
                   durationMs={lobby.duration_ms || 0}
+                  height={mobileSite ? 80 : 152}
                   onPlaybackUpdate={handlePlaybackUpdate}
                   onControllerStatus={setSpotifyStatus}
                 />
@@ -1549,8 +1600,43 @@ export default function MultiplayerPage() {
             )}
             {lobby.spotify_track_id && spotifyStatus === "fallback" && !mobileGameActive && (
               <p className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                Spotify está usando el modo compatible. Ya podés marcarte como listo; al comenzar, la sala usará su reloj compartido.
+                {mobileSite
+                  ? "Spotify activó el modo compatible, que puede limitar el audio a 30 segundos en móviles. Reintentá antes de marcarte como listo."
+                  : "Spotify está usando el modo compatible. Ya podés marcarte como listo; al comenzar, la sala usará su reloj compartido."}
               </p>
+            )}
+            {lobby.spotify_track_id && spotifyStatus === "preview" && (
+              <p role="alert" className="mt-3 rounded-xl border border-red-300/30 bg-red-400/10 p-3 text-sm text-red-100">
+                Spotify sólo habilitó una vista previa. Tu audio no se marcará como listo hasta recuperar la canción completa.
+              </p>
+            )}
+            {mobileSite && lobby.spotify_track_id && !inGame && (
+              <div className="mt-3 grid grid-cols-2 gap-2 rounded-2xl border border-emerald-400/20 bg-emerald-400/[.06] p-3">
+                <button
+                  type="button"
+                  onClick={activateSpotify}
+                  disabled={spotifyStatus !== "ready" || spotifyActivated}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-emerald-950 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Play size={16} /> {spotifyActivated ? "Spotify activado" : "Activar Spotify"}
+                </button>
+                <button
+                  type="button"
+                  onClick={retrySpotify}
+                  disabled={spotifyStatus === "loading"}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <RotateCcw size={16} /> Reintentar
+                </button>
+                <a
+                  href={`https://open.spotify.com/track/${lobby.spotify_track_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="col-span-2 rounded-xl border border-emerald-400/20 px-3 py-2 text-center text-xs font-bold text-emerald-200"
+                >
+                  Abrir esta canción en Spotify
+                </a>
+              </div>
             )}
             {!inGame && lobby.host_id === authUser.id && (
               <div className="mt-5 space-y-5">
@@ -1675,7 +1761,7 @@ export default function MultiplayerPage() {
                 </div>
                 {lobby.host_id === authUser.id ? (
                   <button
-                    disabled={!allReady || !allAudioReady || spotifyStatus === "loading" || spotifyStatus === "unavailable"}
+                    disabled={!allReady || !allAudioReady || spotifyRoomBlocked}
                     onClick={startLobby}
                     className={`flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30 ${mobileSite ? "w-full" : ""}`}
                   >
@@ -1684,7 +1770,7 @@ export default function MultiplayerPage() {
                 ) : (
                   <button
                     onClick={toggleReady}
-                    disabled={updatingReady}
+                    disabled={updatingReady || spotifyRoomBlocked}
                     className={`rounded-xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-40 ${mobileSite ? "w-full" : ""} ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
                   >
                     {updatingReady ? "Guardando…" : me?.ready ? "¡Listo!" : "Estoy listo"}

@@ -215,6 +215,7 @@ export default function Home() {
   const [buffering, setBuffering] = useState(false);
   const [spotifyStatus, setSpotifyStatus] =
     useState<SpotifyControllerStatus>("loading");
+  const [spotifyActivated, setSpotifyActivated] = useState(false);
   const [finished, setFinished] = useState(false);
   const [allLinesComplete, setAllLinesComplete] = useState(false);
   const [score, setScore] = useState(0);
@@ -428,6 +429,23 @@ export default function Home() {
     (command: SpotifyEmbedCommand) => spotifyRef.current?.command(command),
     [],
   );
+  const spotifyStartBlocked =
+    spotifyStatus === "loading" ||
+    spotifyStatus === "unavailable" ||
+    spotifyStatus === "preview" ||
+    (mobileSite &&
+      (spotifyStatus === "fallback" || !spotifyActivated));
+  const activateSpotify = () => {
+    setError("");
+    spotifyRef.current?.activate();
+  };
+  const retrySpotify = () => {
+    setError("");
+    setSpotifyActivated(false);
+    setSpotifyStatus("loading");
+    spotifyRef.current?.retry();
+  };
+  useEffect(() => setSpotifyActivated(false), [trackId]);
 
   const effectivePosition = lyricClockFromPlayback(
     position,
@@ -838,11 +856,17 @@ export default function Home() {
     }, 180);
   };
   const startGame = () => {
-    if (spotifyStatus === "loading" || spotifyStatus === "unavailable") {
+    if (spotifyStartBlocked) {
       setError(
         spotifyStatus === "loading"
           ? "Esperá unos segundos: Spotify todavía está preparando el reproductor."
-          : "Spotify no entregó un reloj de reproducción fiable. Recargá la página y desactivá bloqueadores para poder jugar sincronizado.",
+          : spotifyStatus === "preview"
+            ? "Spotify sólo habilitó una vista previa de esta canción. Abrí Spotify, iniciá sesión y reintentá el reproductor."
+            : spotifyStatus === "fallback" && mobileSite
+              ? "El modo compatible no puede garantizar la canción completa en móviles. Abrí Spotify y reintentá el reproductor antes de comenzar."
+              : mobileSite && !spotifyActivated
+                ? "Tocá Activar Spotify y esperá a escuchar la canción antes de comenzar."
+                : "Spotify no entregó un reloj de reproducción fiable. Recargá la página y desactivá bloqueadores para poder jugar sincronizado.",
       );
       return;
     }
@@ -855,7 +879,7 @@ export default function Home() {
   const acceptSpotifyNotice = () => {
     localStorage.setItem(LS.spotifyNotice, "1");
     setSpotifyNoticeOpen(false);
-    if (spotifyStatus === "ready" || spotifyStatus === "fallback") beginGame();
+    if (!spotifyStartBlocked) beginGame();
     else setError("Spotify todavía no está listo. Esperá unos segundos y volvé a comenzar.");
   };
 
@@ -1546,8 +1570,8 @@ export default function Home() {
 
             {track && trackId && (
               <section className={`grid lg:grid-cols-[340px_1fr] ${mobileGameActive ? "gap-0" : "gap-5"}`}>
-                <aside className={mobileGameActive ? "mobile-background-player" : "space-y-4"}>
-                  <div className={`overflow-hidden rounded-2xl border border-white/10 bg-white/[.04] p-4 ${mobileSite ? "flex items-center gap-4" : ""}`}>
+                <aside className={mobileGameActive ? "mobile-player-dock" : "space-y-4"}>
+                  <div className={`${mobileGameActive ? "hidden" : ""} overflow-hidden rounded-2xl border border-white/10 bg-white/[.04] p-4 ${mobileSite ? "flex items-center gap-4" : ""}`}>
                     {track.album_image && (
                       <Image
                         src={track.album_image}
@@ -1595,11 +1619,14 @@ export default function Home() {
                     ref={spotifyRef}
                     trackId={trackId}
                     durationMs={track.track_duration_ms}
+                    height={mobileSite ? 80 : 152}
                     onControllerStatus={setSpotifyStatus}
                     onPlaybackUpdate={(state) => {
                       setPosition(state.position);
                       setBuffering(state.isBuffering);
                       setPlaying(!state.isPaused && !state.isBuffering);
+                      if (!state.isPaused && !state.isBuffering)
+                        setSpotifyActivated(true);
                     }}
                   />
                   {spotifyStatus === "loading" && (
@@ -1614,10 +1641,45 @@ export default function Home() {
                   )}
                   {spotifyStatus === "fallback" && (
                     <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                      Spotify está usando el modo compatible. Pulsá Play dentro de Spotify y enseguida Comenzar partida; el juego mantendrá un reloj propio.
+                      {mobileSite
+                        ? "Spotify activó el modo compatible, que puede limitar el audio a 30 segundos en móviles. Abrí Spotify y reintentá el reproductor."
+                        : "Spotify está usando el modo compatible. Pulsá Play dentro de Spotify y enseguida Comenzar partida; el juego mantendrá un reloj propio."}
                     </p>
                   )}
-                  <div className="rounded-2xl border border-white/10 bg-white/[.04] p-4">
+                  {spotifyStatus === "preview" && (
+                    <p role="alert" className="rounded-xl border border-red-300/30 bg-red-400/10 p-3 text-sm text-red-100">
+                      Spotify sólo habilitó una vista previa. La partida permanecerá bloqueada para evitar que la música se corte.
+                    </p>
+                  )}
+                  {mobileSite && !started && (
+                    <div className="grid grid-cols-2 gap-2 rounded-2xl border border-emerald-400/20 bg-emerald-400/[.06] p-3">
+                      <button
+                        type="button"
+                        onClick={activateSpotify}
+                        disabled={spotifyStatus !== "ready" || spotifyActivated}
+                        className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-emerald-950 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Play size={16} /> {spotifyActivated ? "Spotify activado" : "Activar Spotify"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={retrySpotify}
+                        disabled={spotifyStatus === "loading"}
+                        className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <RotateCcw size={16} /> Reintentar
+                      </button>
+                      <a
+                        href={`https://open.spotify.com/track/${trackId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="col-span-2 rounded-xl border border-emerald-400/20 px-3 py-2 text-center text-xs font-bold text-emerald-200"
+                      >
+                        Abrir esta canción en Spotify
+                      </a>
+                    </div>
+                  )}
+                  <div className={`${mobileGameActive ? "hidden" : ""} rounded-2xl border border-white/10 bg-white/[.04] p-4`}>
                     <p className="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">
                       Modo de juego
                     </p>
@@ -1947,7 +2009,7 @@ export default function Home() {
                       {!started && (
                         <button
                           onClick={startGame}
-                          disabled={spotifyStatus === "loading" || spotifyStatus === "unavailable"}
+                          disabled={spotifyStartBlocked}
                           className={`rounded-xl bg-white px-7 py-3 font-bold text-black disabled:cursor-not-allowed disabled:opacity-40 ${mobileSite ? "flex-1" : ""}`}
                         >
                           Comenzar partida
