@@ -1,8 +1,29 @@
 const PRODUCTION_ORIGIN = "https://typethelyrics.sbs";
 const MOBILE_PRODUCTION_ORIGIN = "https://m.typethelyrics.sbs";
 
+export const SPOTIFY_USER_SCOPES = [
+  "playlist-read-private",
+  "streaming",
+  "user-read-email",
+  "user-read-private",
+  "user-read-playback-state",
+  "user-modify-playback-state",
+] as const;
+
 export function isAllowedSpotifyOrigin(origin: string) {
   return origin === PRODUCTION_ORIGIN || origin === MOBILE_PRODUCTION_ORIGIN;
+}
+
+export function safeSpotifyReturnTo(value: string | null | undefined) {
+  if (
+    !value ||
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    value.includes("\\") ||
+    /[\r\n]/.test(value)
+  )
+    return "/";
+  return value;
 }
 
 export function spotifyOAuthUrls(requestUrl: string) {

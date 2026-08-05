@@ -43,7 +43,9 @@ En Spotify Developer Dashboard agregá exactamente estas Redirect URIs:
 - Producción móvil: `https://m.typethelyrics.sbs/api/spotify/callback`
 - Local: `http://localhost:3000/api/spotify/callback`
 
-La conexión de Spotify solo se usa para importar playlists propias o colaborativas. La reproducción se realiza con el reproductor embebido de Spotify y puede requerir que el usuario tenga una sesión de Spotify abierta en el navegador.
+En computadoras, la reproducción continúa usando el reproductor embebido. En la versión móvil, la conexión también autoriza Web Playback SDK: cada jugador debe conectar una cuenta Spotify Premium para poder iniciar tanto partidas individuales como multijugador. El Premium propio de TypeTheLyrics sigue siendo independiente y solo controla las funciones internas del juego.
+
+Si la aplicación de Spotify está en Development Mode, agregá cada tester en `Settings > Users Management`. Spotify limita este modo a cinco usuarios autorizados; iniciar sesión sin estar en esa lista no alcanza para usar la API.
 
 ## Versión móvil
 

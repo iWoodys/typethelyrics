@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { spotifyOAuthUrls } from '@/lib/spotify-oauth';
+import { safeSpotifyReturnTo, spotifyOAuthUrls } from '@/lib/spotify-oauth';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   const cookieStore = await cookies();
   const state = url.searchParams.get('state');
   const expectedState = cookieStore.get('spotify_oauth_state')?.value;
+  const returnTo = safeSpotifyReturnTo(cookieStore.get('spotify_oauth_return_to')?.value);
   const code = url.searchParams.get('code');
   if (!code || !state || state !== expectedState) return NextResponse.redirect(`${appOrigin}/?spotify=error`);
   const clientId = process.env.SPOTIFY_CLIENT_ID;
@@ -21,8 +22,11 @@ export async function GET(request: Request) {
   });
   if (!tokenResponse.ok) return NextResponse.redirect(`${appOrigin}/?spotify=error`);
   const token = await tokenResponse.json() as { access_token:string; expires_in:number; refresh_token?:string };
-  const response = NextResponse.redirect(`${appOrigin}/?spotify=connected`);
+  const destination = new URL(returnTo, appOrigin);
+  destination.searchParams.set('spotify', 'connected');
+  const response = NextResponse.redirect(destination);
   response.cookies.delete('spotify_oauth_state');
+  response.cookies.delete('spotify_oauth_return_to');
   response.cookies.set('spotify_user_token', token.access_token, { httpOnly:true, secure:appOrigin.startsWith('https:'), sameSite:'lax', path:'/', maxAge:Math.max(60,token.expires_in-60) });
   if (token.refresh_token) response.cookies.set('spotify_refresh_token', token.refresh_token, { httpOnly:true, secure:appOrigin.startsWith('https:'), sameSite:'lax', path:'/', maxAge:60*60*24*180 });
   return response;

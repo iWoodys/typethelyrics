@@ -58,6 +58,7 @@ export type SpotifyControllerStatus =
   | "loading"
   | "ready"
   | "preview"
+  | "premium-required"
   | "fallback"
   | "unavailable";
 

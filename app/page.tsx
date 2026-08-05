@@ -65,8 +65,12 @@ import {
   SpotifyEmbed,
   type SpotifyEmbedCommand,
   type SpotifyEmbedHandle,
+  type SpotifyPlaybackState,
   type SpotifyControllerStatus,
 } from "@/components/spotify-embed";
+import { SpotifyPremiumGate } from "@/components/spotify-premium-gate";
+import { useSpotifyPremiumSession } from "@/components/spotify-premium-session";
+import { SpotifyWebPlayer } from "@/components/spotify-web-player";
 import {
   difficultyFor,
   GameMode,
@@ -188,6 +192,10 @@ const GUIDE_STEPS = [
 
 export default function Home() {
   const mobileSite = useMobileSite();
+  const {
+    status: spotifyPremiumStatus,
+    refresh: refreshSpotifyPremium,
+  } = useSpotifyPremiumSession(mobileSite);
   const [url, setUrl] = useState("");
   const [trackId, setTrackId] = useState<string | null>(null);
   const [track, setTrack] = useState<TrackDetails | null>(null);
@@ -429,12 +437,22 @@ export default function Home() {
     (command: SpotifyEmbedCommand) => spotifyRef.current?.command(command),
     [],
   );
-  const spotifyStartBlocked =
-    spotifyStatus === "loading" ||
-    spotifyStatus === "unavailable" ||
-    spotifyStatus === "preview" ||
-    (mobileSite &&
-      (spotifyStatus === "fallback" || !spotifyActivated));
+  const handleSpotifyPlaybackUpdate = useCallback(
+    (state: SpotifyPlaybackState) => {
+      setPosition(state.position);
+      setBuffering(state.isBuffering);
+      setPlaying(!state.isPaused && !state.isBuffering);
+      if (!state.isPaused && !state.isBuffering) setSpotifyActivated(true);
+    },
+    [],
+  );
+  const spotifyStartBlocked = mobileSite
+    ? spotifyPremiumStatus !== "premium" ||
+      spotifyStatus !== "ready" ||
+      !spotifyActivated
+    : spotifyStatus === "loading" ||
+      spotifyStatus === "unavailable" ||
+      spotifyStatus === "preview";
   const activateSpotify = () => {
     setError("");
     spotifyRef.current?.activate();
@@ -443,6 +461,7 @@ export default function Home() {
     setError("");
     setSpotifyActivated(false);
     setSpotifyStatus("loading");
+    if (mobileSite) refreshSpotifyPremium();
     spotifyRef.current?.retry();
   };
   useEffect(() => setSpotifyActivated(false), [trackId]);
@@ -858,19 +877,25 @@ export default function Home() {
   const startGame = () => {
     if (spotifyStartBlocked) {
       setError(
-        spotifyStatus === "loading"
+        mobileSite && spotifyPremiumStatus === "loading"
+          ? "Estamos validando tu cuenta de Spotify Premium."
+          : mobileSite && spotifyPremiumStatus === "free"
+            ? "Spotify Premium es obligatorio para jugar desde un teléfono o tablet."
+            : mobileSite && spotifyPremiumStatus !== "premium"
+              ? "Conectá una cuenta Spotify Premium para jugar desde el móvil."
+              : mobileSite && spotifyStatus === "premium-required"
+                ? "Spotify rechazó esta cuenta porque no tiene Premium o necesita volver a autorizar los permisos."
+              : spotifyStatus === "loading"
           ? "Esperá unos segundos: Spotify todavía está preparando el reproductor."
           : spotifyStatus === "preview"
             ? "Spotify sólo habilitó una vista previa de esta canción. Abrí Spotify, iniciá sesión y reintentá el reproductor."
-            : spotifyStatus === "fallback" && mobileSite
-              ? "El modo compatible no puede garantizar la canción completa en móviles. Abrí Spotify y reintentá el reproductor antes de comenzar."
-              : mobileSite && !spotifyActivated
-                ? "Tocá Activar Spotify y esperá a escuchar la canción antes de comenzar."
+            : mobileSite && !spotifyActivated
+              ? "Tocá Activar Spotify y esperá a escuchar la canción antes de comenzar."
                 : "Spotify no entregó un reloj de reproducción fiable. Recargá la página y desactivá bloqueadores para poder jugar sincronizado.",
       );
       return;
     }
-    if (!localStorage.getItem(LS.spotifyNotice)) {
+    if (!mobileSite && !localStorage.getItem(LS.spotifyNotice)) {
       setSpotifyNoticeOpen(true);
       return;
     }
@@ -1614,36 +1639,46 @@ export default function Home() {
                     </div>
                     </div>
                   </div>
-                  <SpotifyEmbed
-                    key={trackId}
-                    ref={spotifyRef}
-                    trackId={trackId}
-                    durationMs={track.track_duration_ms}
-                    height={mobileSite ? 80 : 152}
-                    onControllerStatus={setSpotifyStatus}
-                    onPlaybackUpdate={(state) => {
-                      setPosition(state.position);
-                      setBuffering(state.isBuffering);
-                      setPlaying(!state.isPaused && !state.isBuffering);
-                      if (!state.isPaused && !state.isBuffering)
-                        setSpotifyActivated(true);
-                    }}
-                  />
-                  {spotifyStatus === "loading" && (
+                  {mobileSite ? (
+                    spotifyPremiumStatus === "premium" ? (
+                      <SpotifyWebPlayer
+                        key={`premium-${trackId}`}
+                        ref={spotifyRef}
+                        trackId={trackId}
+                        durationMs={track.track_duration_ms}
+                        onControllerStatus={setSpotifyStatus}
+                        onPlaybackUpdate={handleSpotifyPlaybackUpdate}
+                      />
+                    ) : (
+                      <SpotifyPremiumGate
+                        status={spotifyPremiumStatus}
+                        onRefresh={refreshSpotifyPremium}
+                      />
+                    )
+                  ) : (
+                    <SpotifyEmbed
+                      key={trackId}
+                      ref={spotifyRef}
+                      trackId={trackId}
+                      durationMs={track.track_duration_ms}
+                      height={152}
+                      onControllerStatus={setSpotifyStatus}
+                      onPlaybackUpdate={handleSpotifyPlaybackUpdate}
+                    />
+                  )}
+                  {(!mobileSite || spotifyPremiumStatus === "premium") && spotifyStatus === "loading" && (
                     <p className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3 text-sm text-cyan-100">
                       Preparando el reloj de Spotify…
                     </p>
                   )}
-                  {spotifyStatus === "unavailable" && (
+                  {(!mobileSite || spotifyPremiumStatus === "premium") && spotifyStatus === "unavailable" && (
                     <p role="alert" className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
                       El reproductor visible puede reproducir audio, pero no entregó el reloj necesario para sincronizar el juego. Recargá la página o desactivá el bloqueador de contenido.
                     </p>
                   )}
-                  {spotifyStatus === "fallback" && (
+                  {!mobileSite && spotifyStatus === "fallback" && (
                     <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                      {mobileSite
-                        ? "Spotify activó el modo compatible, que puede limitar el audio a 30 segundos en móviles. Abrí Spotify y reintentá el reproductor."
-                        : "Spotify está usando el modo compatible. Pulsá Play dentro de Spotify y enseguida Comenzar partida; el juego mantendrá un reloj propio."}
+                      Spotify está usando el modo compatible. Pulsá Play dentro de Spotify y enseguida Comenzar partida; el juego mantendrá un reloj propio.
                     </p>
                   )}
                   {spotifyStatus === "preview" && (
@@ -1651,7 +1686,7 @@ export default function Home() {
                       Spotify sólo habilitó una vista previa. La partida permanecerá bloqueada para evitar que la música se corte.
                     </p>
                   )}
-                  {mobileSite && !started && (
+                  {mobileSite && spotifyPremiumStatus === "premium" && !started && (
                     <div className="grid grid-cols-2 gap-2 rounded-2xl border border-emerald-400/20 bg-emerald-400/[.06] p-3">
                       <button
                         type="button"
@@ -1670,12 +1705,10 @@ export default function Home() {
                         <RotateCcw size={16} /> Reintentar
                       </button>
                       <a
-                        href={`https://open.spotify.com/track/${trackId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        href="/api/spotify/login"
                         className="col-span-2 rounded-xl border border-emerald-400/20 px-3 py-2 text-center text-xs font-bold text-emerald-200"
                       >
-                        Abrir esta canción en Spotify
+                        Reconectar Spotify Premium
                       </a>
                     </div>
                   )}

@@ -61,6 +61,9 @@ import {
   type SpotifyPlaybackState,
   type SpotifyControllerStatus,
 } from "@/components/spotify-embed";
+import { SpotifyPremiumGate } from "@/components/spotify-premium-gate";
+import { useSpotifyPremiumSession } from "@/components/spotify-premium-session";
+import { SpotifyWebPlayer } from "@/components/spotify-web-player";
 import { useMobileSite } from "@/components/mobile-site";
 import {
   useFullscreenMode,
@@ -167,6 +170,10 @@ function Avatar({
 }
 export default function MultiplayerPage() {
   const mobileSite = useMobileSite();
+  const {
+    status: spotifyPremiumStatus,
+    refresh: refreshSpotifyPremium,
+  } = useSpotifyPremiumSession(mobileSite);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [lobby, setLobby] = useState<Lobby | null>(null);
@@ -242,12 +249,13 @@ export default function MultiplayerPage() {
     lobby.status !== "waiting" &&
     lobby.status !== "finished" &&
     !localFinished;
-  const spotifyRoomBlocked =
-    spotifyStatus === "loading" ||
-    spotifyStatus === "unavailable" ||
-    spotifyStatus === "preview" ||
-    (mobileSite &&
-      (spotifyStatus === "fallback" || !spotifyActivated));
+  const spotifyRoomBlocked = mobileSite
+    ? spotifyPremiumStatus !== "premium" ||
+      spotifyStatus !== "ready" ||
+      !spotifyActivated
+    : spotifyStatus === "loading" ||
+      spotifyStatus === "unavailable" ||
+      spotifyStatus === "preview";
   const mobileKeyboardOpen = useMobileKeyboard(mobileGameActive);
   const wakeLockActive = useScreenWakeLock(mobileGameActive && !!startedAt);
   const { fullscreen, supported: fullscreenSupported, toggleFullscreen } =
@@ -711,11 +719,17 @@ export default function MultiplayerPage() {
     if (!lobby) return;
     if (spotifyRoomBlocked) {
       setError(
-        spotifyStatus === "preview"
+        mobileSite && spotifyPremiumStatus === "loading"
+          ? "Estamos validando tu cuenta de Spotify Premium."
+          : mobileSite && spotifyPremiumStatus === "free"
+            ? "Spotify Premium es obligatorio para jugar desde un teléfono o tablet."
+            : mobileSite && spotifyPremiumStatus !== "premium"
+              ? "Conectá una cuenta Spotify Premium para jugar desde el móvil."
+              : mobileSite && spotifyStatus === "premium-required"
+                ? "Spotify rechazó esta cuenta porque no tiene Premium o necesita volver a autorizar los permisos."
+              : spotifyStatus === "preview"
           ? "Spotify sólo habilitó una vista previa. Reintentá el reproductor antes de iniciar."
-          : spotifyStatus === "fallback" && mobileSite
-            ? "El modo compatible no garantiza la canción completa en móviles. Reintentá el reproductor."
-            : mobileSite && !spotifyActivated
+          : mobileSite && !spotifyActivated
               ? "Tocá Activar Spotify y esperá a escuchar la canción antes de iniciar."
               : "Spotify todavía no entregó un reloj fiable en este navegador.",
       );
@@ -841,6 +855,7 @@ export default function MultiplayerPage() {
     setError("");
     setSpotifyActivated(false);
     setSpotifyStatus("loading");
+    if (mobileSite) refreshSpotifyPremium();
     spotifyRef.current?.retry();
   };
   useEffect(() => {
@@ -1577,32 +1592,54 @@ export default function MultiplayerPage() {
           <section className={`${mobileGameActive ? "p-2" : "rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7"}`}>
             {lobby.spotify_track_id && (
               <div className={mobileGameActive ? "mobile-player-dock" : ""}>
-                <SpotifyEmbed
-                  key={lobby.spotify_track_id}
-                  ref={spotifyRef}
-                  trackId={lobby.spotify_track_id}
-                  durationMs={lobby.duration_ms || 0}
-                  height={mobileSite ? 80 : 152}
-                  onPlaybackUpdate={handlePlaybackUpdate}
-                  onControllerStatus={setSpotifyStatus}
-                />
+                {mobileSite ? (
+                  spotifyPremiumStatus === "premium" ? (
+                    <SpotifyWebPlayer
+                      key={`premium-${lobby.spotify_track_id}`}
+                      ref={spotifyRef}
+                      trackId={lobby.spotify_track_id}
+                      durationMs={lobby.duration_ms || 0}
+                      onPlaybackUpdate={handlePlaybackUpdate}
+                      onControllerStatus={setSpotifyStatus}
+                    />
+                  ) : (
+                    <SpotifyPremiumGate
+                      status={spotifyPremiumStatus}
+                      onRefresh={refreshSpotifyPremium}
+                      returnTo={`/multiplayer?room=${lobby.code}`}
+                    />
+                  )
+                ) : (
+                  <SpotifyEmbed
+                    key={lobby.spotify_track_id}
+                    ref={spotifyRef}
+                    trackId={lobby.spotify_track_id}
+                    durationMs={lobby.duration_ms || 0}
+                    height={152}
+                    onPlaybackUpdate={handlePlaybackUpdate}
+                    onControllerStatus={setSpotifyStatus}
+                  />
+                )}
               </div>
             )}
-            {lobby.spotify_track_id && spotifyStatus === "loading" && !mobileGameActive && (
+            {lobby.spotify_track_id &&
+              (!mobileSite || spotifyPremiumStatus === "premium") &&
+              spotifyStatus === "loading" &&
+              !mobileGameActive && (
               <p className="mt-3 rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3 text-sm text-cyan-100">
                 Preparando el reloj de Spotify…
               </p>
             )}
-            {lobby.spotify_track_id && spotifyStatus === "unavailable" && (
+            {lobby.spotify_track_id &&
+              (!mobileSite || spotifyPremiumStatus === "premium") &&
+              spotifyStatus === "unavailable" && (
               <p role="alert" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
                 Spotify no entregó el reloj necesario para jugar sincronizado. Recargá la página o desactivá el bloqueador de contenido.
               </p>
             )}
-            {lobby.spotify_track_id && spotifyStatus === "fallback" && !mobileGameActive && (
+            {lobby.spotify_track_id && !mobileSite && spotifyStatus === "fallback" && !mobileGameActive && (
               <p className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                {mobileSite
-                  ? "Spotify activó el modo compatible, que puede limitar el audio a 30 segundos en móviles. Reintentá antes de marcarte como listo."
-                  : "Spotify está usando el modo compatible. Ya podés marcarte como listo; al comenzar, la sala usará su reloj compartido."}
+                Spotify está usando el modo compatible. Ya podés marcarte como listo; al comenzar, la sala usará su reloj compartido.
               </p>
             )}
             {lobby.spotify_track_id && spotifyStatus === "preview" && (
@@ -1610,7 +1647,7 @@ export default function MultiplayerPage() {
                 Spotify sólo habilitó una vista previa. Tu audio no se marcará como listo hasta recuperar la canción completa.
               </p>
             )}
-            {mobileSite && lobby.spotify_track_id && !inGame && (
+            {mobileSite && spotifyPremiumStatus === "premium" && lobby.spotify_track_id && !inGame && (
               <div className="mt-3 grid grid-cols-2 gap-2 rounded-2xl border border-emerald-400/20 bg-emerald-400/[.06] p-3">
                 <button
                   type="button"
@@ -1629,12 +1666,10 @@ export default function MultiplayerPage() {
                   <RotateCcw size={16} /> Reintentar
                 </button>
                 <a
-                  href={`https://open.spotify.com/track/${lobby.spotify_track_id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href={`/api/spotify/login?returnTo=${encodeURIComponent(`/multiplayer?room=${lobby.code}`)}`}
                   className="col-span-2 rounded-xl border border-emerald-400/20 px-3 py-2 text-center text-xs font-bold text-emerald-200"
                 >
-                  Abrir esta canción en Spotify
+                  Reconectar Spotify Premium
                 </a>
               </div>
             )}
