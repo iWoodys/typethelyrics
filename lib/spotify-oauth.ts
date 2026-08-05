@@ -1,9 +1,14 @@
 const PRODUCTION_ORIGIN = "https://typethelyrics.sbs";
+const MOBILE_PRODUCTION_ORIGIN = "https://m.typethelyrics.sbs";
+
+export function isAllowedSpotifyOrigin(origin: string) {
+  return origin === PRODUCTION_ORIGIN || origin === MOBILE_PRODUCTION_ORIGIN;
+}
 
 export function spotifyOAuthUrls(requestUrl: string) {
   const requestOrigin = new URL(requestUrl).origin;
   const appOrigin = process.env.NODE_ENV === "production"
-    ? PRODUCTION_ORIGIN
+    ? isAllowedSpotifyOrigin(requestOrigin) ? requestOrigin : PRODUCTION_ORIGIN
     : requestOrigin;
 
   return {

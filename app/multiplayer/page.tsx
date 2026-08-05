@@ -54,6 +54,7 @@ import {
   type SpotifyPlaybackState,
   type SpotifyControllerStatus,
 } from "@/components/spotify-embed";
+import { useMobileSite } from "@/components/mobile-site";
 
 type Profile = {
   id: string;
@@ -147,6 +148,7 @@ function Avatar({
   );
 }
 export default function MultiplayerPage() {
+  const mobileSite = useMobileSite();
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [lobby, setLobby] = useState<Lobby | null>(null);
@@ -1367,8 +1369,8 @@ export default function MultiplayerPage() {
 
   const inGame = lobby.status !== "waiting";
   return (
-    <main className="min-h-screen bg-[#07080d] p-4 text-white">
-      <div className="mx-auto max-w-6xl py-6">
+    <main className={`min-h-screen bg-[#07080d] text-white ${mobileSite ? "p-3" : "p-4"}`}>
+      <div className={`mx-auto max-w-6xl ${mobileSite ? "py-3" : "py-6"}`}>
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3"><Link href="/" className="font-bold">TypeTheLyrics</Link>
             <button disabled={working} onClick={() => void leaveLobby()} className="flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-zinc-400 hover:text-white disabled:opacity-50"><LogOut size={14}/> Salir</button>
@@ -1530,7 +1532,7 @@ export default function MultiplayerPage() {
               </div>
             )}
             {!inGame && lobby.track_title && (
-              <div className="mt-5 flex items-center justify-between gap-3">
+              <div className={`mt-5 flex items-center justify-between gap-3 ${mobileSite ? "flex-col items-stretch" : ""}`}>
                 <div>
                   <h2 className="text-2xl font-black">{lobby.track_title}</h2>
                   <p className="text-zinc-400">{lobby.track_artist}</p>
@@ -1545,7 +1547,7 @@ export default function MultiplayerPage() {
                   <button
                     disabled={!allReady || !allAudioReady || spotifyStatus === "loading" || spotifyStatus === "unavailable"}
                     onClick={startLobby}
-                    className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30"
+                    className={`flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30 ${mobileSite ? "w-full" : ""}`}
                   >
                     <Play size={18} /> Iniciar
                   </button>
@@ -1553,11 +1555,33 @@ export default function MultiplayerPage() {
                   <button
                     onClick={toggleReady}
                     disabled={updatingReady}
-                    className={`rounded-xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-40 ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
+                    className={`rounded-xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-40 ${mobileSite ? "w-full" : ""} ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
                   >
                     {updatingReady ? "Guardando…" : me?.ready ? "¡Listo!" : "Estoy listo"}
                   </button>
                 )}
+              </div>
+            )}
+            {mobileSite && inGame && (
+              <div className="mt-5">
+                <div className="mb-2 flex items-center justify-between">
+                  <b className="text-sm">Clasificación en vivo</b>
+                  <span className="text-xs text-zinc-500">{players.length}/8</span>
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-2">
+                  {sortedPlayers.map((player, index) => (
+                    <div
+                      key={player.user_id}
+                      className={`min-w-[145px] rounded-xl border px-3 py-2 ${index === 0 ? "border-amber-300/30 bg-amber-300/10" : "border-white/10 bg-black/20"}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <b className="truncate text-xs">#{index + 1} {player.users.username}</b>
+                        <span className="text-xs font-black text-violet-300">{player.score.toLocaleString()}</span>
+                      </div>
+                      <p className="mt-1 text-[10px] text-zinc-500">{player.accuracy}% · {player.wpm} ppm</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {inGame && (
@@ -1572,6 +1596,11 @@ export default function MultiplayerPage() {
                       <p className="mt-4 text-sm text-amber-200">
                         Spotify se está preparando y comenzará automáticamente.
                       </p>
+                      {mobileSite && (
+                        <p className="mt-2 text-xs text-cyan-200">
+                          Al terminar la cuenta, tocá el campo de escritura para abrir el teclado.
+                        </p>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1612,7 +1641,7 @@ export default function MultiplayerPage() {
                     )}
                     <div
                       onClick={() => inputRef.current?.focus()}
-                      className={`relative min-h-[330px] cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] p-6 text-center transition-all duration-200 sm:p-10 ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
+                      className={`relative cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] text-center transition-all duration-200 ${mobileSite ? "min-h-[280px] p-4" : "min-h-[330px] p-6 sm:p-10"} ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
                     >
                       {lineFeedback && (
                         <div
@@ -1626,7 +1655,7 @@ export default function MultiplayerPage() {
                         </div>
                       )}
                       <p
-                        className={`mb-6 mt-12 text-sm uppercase tracking-[.3em] ${canType ? "text-cyan-300" : "text-zinc-600"}`}
+                        className={`${mobileSite ? "mb-4 mt-10 text-xs" : "mb-6 mt-12 text-sm"} uppercase tracking-[.3em] ${canType ? "text-cyan-300" : "text-zinc-600"}`}
                       >
                         {allLinesComplete
                           ? "Letra completada · la canción continúa hasta el final"
@@ -1641,7 +1670,7 @@ export default function MultiplayerPage() {
                                   : "Canción completada"}
                       </p>
                       <div
-                        className={`min-h-24 text-3xl font-bold leading-relaxed transition-opacity ${!canType ? "opacity-35" : "opacity-100"}`}
+                        className={`min-h-24 font-bold leading-relaxed transition-opacity ${mobileSite ? "text-2xl" : "text-3xl"} ${!canType ? "opacity-35" : "opacity-100"}`}
                       >
                         {currentLine?.words
                           .split(/\s+/)
@@ -1677,7 +1706,7 @@ export default function MultiplayerPage() {
                             </span>
                           )) || "Preparando la letra…"}
                       </div>
-                      <p className="mt-8 text-xl text-zinc-600">
+                      <p className={`${mobileSite ? "mt-6 text-base" : "mt-8 text-xl"} text-zinc-600`}>
                         {lyrics[lineIndex + 1]?.words || "Último verso"}
                       </p>
                       {!canType && currentLine && !allLinesComplete && (
@@ -1691,14 +1720,21 @@ export default function MultiplayerPage() {
                         </div>
                       )}
                       <input
-                        key={lineIndex}
                         ref={inputRef}
                         value={visibleTyped}
                         onChange={(event) => typeLine(event.target.value)}
                         onPaste={(event) => event.preventDefault()}
-                        disabled={!canType}
-                        className="absolute inset-0 opacity-0"
+                        disabled={!mobileSite && !canType}
+                        aria-label="Escribir la letra actual"
+                        placeholder={canType ? "Escribí la frase…" : "Tocá aquí y esperá a que comience la voz…"}
+                        className={mobileSite
+                          ? "mt-6 h-14 w-full rounded-xl border border-white/15 bg-black/35 px-4 text-left text-base text-white outline-none placeholder:text-zinc-600 focus:border-cyan-300"
+                          : "absolute inset-0 opacity-0"}
                         autoComplete="off"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        inputMode="text"
+                        enterKeyHint="done"
                         spellCheck={false}
                       />
                     </div>
@@ -1707,7 +1743,7 @@ export default function MultiplayerPage() {
               </div>
             )}
           </section>
-          <aside className="rounded-3xl border border-white/10 bg-white/[.04] p-5">
+          <aside className={`rounded-3xl border border-white/10 bg-white/[.04] p-5 ${mobileSite && inGame ? "hidden" : ""}`}>
             <div className="flex items-center justify-between">
               <h2 className="font-bold">
                 {inGame ? "Clasificación en vivo" : "Jugadores"}

@@ -1,6 +1,6 @@
 # TypeTheLyrics
 
-Juego de mecanografía musical con canciones de Spotify, letras sincronizadas de LRCLIB, cinco modos de juego, cuentas, progreso y salas multijugador de hasta ocho personas.
+Juego de mecanografía musical con canciones de Spotify, letras sincronizadas de LRCLIB, tres modos de juego, cuentas, progreso y salas multijugador de hasta ocho personas.
 
 ## Desarrollo local
 
@@ -40,9 +40,16 @@ Las migraciones 009, 010 y 011 son obligatorias. La 010 valida las partidas en e
 En Spotify Developer Dashboard agregá exactamente estas Redirect URIs:
 
 - Producción: `https://typethelyrics.sbs/api/spotify/callback`
+- Producción móvil: `https://m.typethelyrics.sbs/api/spotify/callback`
 - Local: `http://localhost:3000/api/spotify/callback`
 
 La conexión de Spotify solo se usa para importar playlists propias o colaborativas. La reproducción se realiza con el reproductor embebido de Spotify y puede requerir que el usuario tenga una sesión de Spotify abierta en el navegador.
+
+## Versión móvil
+
+La misma aplicación sirve la versión móvil cuando el hostname es `m.typethelyrics.sbs` o la ventana mide 767 px de ancho o menos. Para probarla localmente, abrí `http://localhost:3000/?mobile=1`.
+
+En Render agregá `m.typethelyrics.sbs` como Custom Domain del mismo servicio. En el proveedor DNS creá un registro CNAME con nombre `m` y como destino el subdominio `onrender.com` del servicio; luego verificá el dominio en Render. También es obligatorio registrar la Redirect URI móvil indicada arriba en Spotify Developer Dashboard.
 
 ## Verificación
 

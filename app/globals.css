@@ -6,6 +6,31 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+html[data-mobile-site="true"] {
+  color-scheme: dark;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html[data-mobile-site="true"] body {
+  min-width: 320px;
+  overscroll-behavior-y: contain;
+}
+
+html[data-mobile-site="true"] button,
+html[data-mobile-site="true"] a,
+html[data-mobile-site="true"] input,
+html[data-mobile-site="true"] select {
+  touch-action: manipulation;
+}
+
+.mobile-safe-bottom {
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+}
+
+.mobile-bottom-nav {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
