@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SPOTIFY_USER_SCOPES,
   isAllowedSpotifyOrigin,
   safeSpotifyReturnTo,
+  spotifyOAuthUrls,
 } from "./spotify-oauth";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("Spotify OAuth origins", () => {
   it("acepta los dominios web y móvil oficiales", () => {
@@ -34,5 +39,20 @@ describe("Spotify OAuth origins", () => {
     expect(safeSpotifyReturnTo("https://evil.example")).toBe("/");
     expect(safeSpotifyReturnTo("//evil.example")).toBe("/");
     expect(safeSpotifyReturnTo("/\\evil.example")).toBe("/");
+  });
+
+  it("respeta el dominio móvil informado por el proxy de Render", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const headers = new Headers({
+      host: "typethelyrics.sbs",
+      "x-forwarded-host": "m.typethelyrics.sbs",
+      "x-forwarded-proto": "https",
+    });
+    expect(
+      spotifyOAuthUrls("https://typethelyrics.sbs/api/spotify/login", headers),
+    ).toEqual({
+      appOrigin: "https://m.typethelyrics.sbs",
+      redirectUri: "https://m.typethelyrics.sbs/api/spotify/callback",
+    });
   });
 });

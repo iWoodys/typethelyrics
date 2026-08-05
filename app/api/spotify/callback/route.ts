@@ -4,7 +4,7 @@ import { safeSpotifyReturnTo, spotifyOAuthUrls } from '@/lib/spotify-oauth';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const { appOrigin, redirectUri } = spotifyOAuthUrls(request.url);
+  const { appOrigin, redirectUri } = spotifyOAuthUrls(request.url, request.headers);
   const cookieStore = await cookies();
   const state = url.searchParams.get('state');
   const expectedState = cookieStore.get('spotify_oauth_state')?.value;

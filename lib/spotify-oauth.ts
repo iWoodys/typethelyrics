@@ -26,8 +26,27 @@ export function safeSpotifyReturnTo(value: string | null | undefined) {
   return value;
 }
 
-export function spotifyOAuthUrls(requestUrl: string) {
-  const requestOrigin = new URL(requestUrl).origin;
+type RequestHeaders = Pick<Headers, "get">;
+
+function firstForwardedValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || null;
+}
+
+export function spotifyOAuthUrls(
+  requestUrl: string,
+  requestHeaders?: RequestHeaders,
+) {
+  const parsedRequest = new URL(requestUrl);
+  const forwardedHost = firstForwardedValue(
+    requestHeaders?.get("x-forwarded-host") || requestHeaders?.get("host") || null,
+  );
+  const forwardedProtocol = firstForwardedValue(
+    requestHeaders?.get("x-forwarded-proto") || null,
+  );
+  const visibleProtocol = forwardedProtocol || parsedRequest.protocol.replace(":", "");
+  const requestOrigin = forwardedHost
+    ? `${visibleProtocol}://${forwardedHost}`
+    : parsedRequest.origin;
   const appOrigin = process.env.NODE_ENV === "production"
     ? isAllowedSpotifyOrigin(requestOrigin) ? requestOrigin : PRODUCTION_ORIGIN
     : requestOrigin;

@@ -5,7 +5,7 @@ import { SPOTIFY_USER_SCOPES, safeSpotifyReturnTo, spotifyOAuthUrls } from '@/li
 export async function GET(request: Request) {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   if (!clientId) return NextResponse.json({ error: 'Spotify no está configurado.' }, { status: 503 });
-  const { appOrigin, redirectUri } = spotifyOAuthUrls(request.url);
+  const { appOrigin, redirectUri } = spotifyOAuthUrls(request.url, request.headers);
   const returnTo = safeSpotifyReturnTo(new URL(request.url).searchParams.get('returnTo'));
   const state = randomBytes(24).toString('hex');
   const authorize = new URL('https://accounts.spotify.com/authorize');
