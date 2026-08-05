@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   activeTypedWord,
+  mobileViewportMetrics,
   mobileVersePreview,
   mobileVerseWindow,
 } from "./mobile-game";
@@ -29,5 +30,16 @@ describe("mobile gameplay helpers", () => {
       "tres",
     ]);
     expect(mobileVersePreview("uno dos tres cuatro", 3)).toBe("uno dos tres…");
+  });
+
+  it("incluye el desplazamiento visual del teclado en el alto CSS", () => {
+    expect(mobileViewportMetrics(915, 734, 101)).toEqual({
+      cssHeight: 835,
+      obscuredHeight: 80,
+    });
+    expect(mobileViewportMetrics(915, 500, 0)).toEqual({
+      cssHeight: 500,
+      obscuredHeight: 415,
+    });
   });
 });

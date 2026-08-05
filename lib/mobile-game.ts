@@ -5,6 +5,21 @@ export type MobileVerseWindow = {
   totalWords: number;
 };
 
+export function mobileViewportMetrics(
+  innerHeight: number,
+  viewportHeight: number,
+  viewportOffsetTop: number,
+) {
+  const visibleBottom = Math.max(
+    0,
+    Math.round(viewportHeight + Math.max(0, viewportOffsetTop)),
+  );
+  return {
+    cssHeight: visibleBottom,
+    obscuredHeight: Math.max(0, Math.round(innerHeight - visibleBottom)),
+  };
+}
+
 export function activeTypedWord(value: string) {
   const normalized = value.trimStart();
   if (!normalized) return 0;

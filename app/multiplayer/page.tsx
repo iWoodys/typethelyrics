@@ -1169,7 +1169,7 @@ export default function MultiplayerPage() {
   useEffect(() => {
     if (!mobileKeyboardOpen || !mobileGameActive) return;
     window.requestAnimationFrame(() =>
-      inputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }),
+      inputRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" }),
     );
   }, [canType, lineIndex, mobileGameActive, mobileKeyboardOpen]);
 

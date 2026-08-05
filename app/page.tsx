@@ -522,7 +522,7 @@ export default function Home() {
   useEffect(() => {
     if (!mobileKeyboardOpen || !mobileGameActive) return;
     window.requestAnimationFrame(() =>
-      inputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }),
+      inputRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" }),
     );
   }, [canType, lineIndex, mobileGameActive, mobileKeyboardOpen]);
   const showLineFeedback = useCallback(

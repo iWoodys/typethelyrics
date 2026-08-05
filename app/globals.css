@@ -13,6 +13,7 @@ html[data-mobile-site="true"] {
 
 html[data-mobile-site="true"] body {
   min-width: 320px;
+  background-color: #07080d;
   overscroll-behavior-y: contain;
 }
 
@@ -33,6 +34,7 @@ html[data-mobile-site="true"] select {
 
 .mobile-game-shell {
   min-height: var(--mobile-viewport-height, 100dvh);
+  background-color: #07080d;
   padding-bottom: env(safe-area-inset-bottom);
 }
 

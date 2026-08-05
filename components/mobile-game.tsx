@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { mobileViewportMetrics } from "@/lib/mobile-game";
 
 type WakeLockHandle = {
   release: () => Promise<void>;
@@ -28,20 +29,21 @@ export function useMobileKeyboard(active: boolean) {
     const viewport = window.visualViewport;
     const update = () => {
       const viewportHeight = viewport?.height || window.innerHeight;
-      const obscuredHeight = Math.max(
-        0,
-        window.innerHeight - viewportHeight - (viewport?.offsetTop || 0),
+      const metrics = mobileViewportMetrics(
+        window.innerHeight,
+        viewportHeight,
+        viewport?.offsetTop || 0,
       );
-      const open = obscuredHeight > 120;
+      const open = metrics.obscuredHeight > 120;
       setKeyboardOpen(open);
       document.documentElement.dataset.mobileKeyboard = open ? "true" : "false";
       document.documentElement.style.setProperty(
         "--mobile-viewport-height",
-        `${Math.round(viewportHeight)}px`,
+        `${metrics.cssHeight}px`,
       );
       document.documentElement.style.setProperty(
         "--mobile-keyboard-height",
-        `${Math.round(obscuredHeight)}px`,
+        `${metrics.obscuredHeight}px`,
       );
     };
 
