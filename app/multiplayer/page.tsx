@@ -163,6 +163,7 @@ export default function MultiplayerPage() {
   const [searchingSongs, setSearchingSongs] = useState(false);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [updatingReady, setUpdatingReady] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -609,14 +610,20 @@ export default function MultiplayerPage() {
   };
 
   const toggleReady = async () => {
-    if (!lobby || !authUser) return;
+    if (!lobby || !authUser || updatingReady) return;
     const me = players.find((player) => player.user_id === authUser.id);
-    const { error: rpcError } = await supabase.rpc("set_lobby_ready", {
-      target_lobby: lobby.id,
-      is_ready: !me?.ready,
-    });
-    if (rpcError) setError(rpcError.message);
-    else await loadRoom(lobby.id);
+    setUpdatingReady(true);
+    setError("");
+    try {
+      const { error: rpcError } = await supabase.rpc("set_lobby_ready", {
+        target_lobby: lobby.id,
+        is_ready: !me?.ready,
+      });
+      if (rpcError) setError(rpcError.message);
+      else await loadRoom(lobby.id);
+    } finally {
+      setUpdatingReady(false);
+    }
   };
 
   const startLobby = async () => {
@@ -1545,10 +1552,10 @@ export default function MultiplayerPage() {
                 ) : (
                   <button
                     onClick={toggleReady}
-                    disabled={spotifyStatus === "loading" || spotifyStatus === "unavailable"}
+                    disabled={updatingReady}
                     className={`rounded-xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-40 ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
                   >
-                    {me?.ready ? "¡Listo!" : "Estoy listo"}
+                    {updatingReady ? "Guardando…" : me?.ready ? "¡Listo!" : "Estoy listo"}
                   </button>
                 )}
               </div>
