@@ -621,7 +621,7 @@ export default function MultiplayerPage() {
 
   const startLobby = async () => {
     if (!lobby) return;
-    if (spotifyStatus !== "ready") {
+    if (spotifyStatus === "loading" || spotifyStatus === "unavailable") {
       setError("Spotify todavía no entregó un reloj fiable en este navegador.");
       return;
     }
@@ -769,6 +769,15 @@ export default function MultiplayerPage() {
     },
     [lobby, loadRoom],
   );
+  useEffect(() => {
+    if (!lobby || lobby.status !== "waiting" || spotifyStatus !== "fallback")
+      return;
+    if (audioReadySentRef.current === true) return;
+    audioReadySentRef.current = true;
+    void supabase
+      .rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: true })
+      .then(() => loadRoom(lobby.id));
+  }, [lobby, loadRoom, spotifyStatus]);
   useEffect(() => {
     if (!lobby?.start_at || !["countdown", "playing"].includes(lobby.status))
       return;
@@ -1401,7 +1410,7 @@ export default function MultiplayerPage() {
             )}
             {lobby.spotify_track_id && spotifyStatus === "fallback" && (
               <p className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                Spotify está usando el modo compatible. Para no desincronizar la sala, recargá la página antes de marcarte como listo.
+                Spotify está usando el modo compatible. Ya podés marcarte como listo; al comenzar, la sala usará su reloj compartido.
               </p>
             )}
             {!inGame && lobby.host_id === authUser.id && (
@@ -1527,7 +1536,7 @@ export default function MultiplayerPage() {
                 </div>
                 {lobby.host_id === authUser.id ? (
                   <button
-                    disabled={!allReady || !allAudioReady || spotifyStatus !== "ready"}
+                    disabled={!allReady || !allAudioReady || spotifyStatus === "loading" || spotifyStatus === "unavailable"}
                     onClick={startLobby}
                     className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30"
                   >
@@ -1536,7 +1545,7 @@ export default function MultiplayerPage() {
                 ) : (
                   <button
                     onClick={toggleReady}
-                    disabled={spotifyStatus !== "ready"}
+                    disabled={spotifyStatus === "loading" || spotifyStatus === "unavailable"}
                     className={`rounded-xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-40 ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
                   >
                     {me?.ready ? "¡Listo!" : "Estoy listo"}
