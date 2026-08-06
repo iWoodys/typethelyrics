@@ -723,6 +723,8 @@ export default function MultiplayerPage() {
           ? "Estamos validando tu cuenta de Spotify Premium."
           : mobileSite && spotifyPremiumStatus === "free"
             ? "Spotify Premium es obligatorio para jugar desde un teléfono o tablet."
+            : mobileSite && spotifyPremiumStatus === "not_allowed"
+              ? "Esta cuenta debe ser agregada como tester en Spotify Developer Dashboard antes de poder jugar."
             : mobileSite && spotifyPremiumStatus !== "premium"
               ? "Conectá una cuenta Spotify Premium para jugar desde el móvil."
               : mobileSite && spotifyStatus === "premium-required"

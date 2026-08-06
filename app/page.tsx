@@ -195,7 +195,7 @@ export default function Home() {
   const {
     status: spotifyPremiumStatus,
     refresh: refreshSpotifyPremium,
-  } = useSpotifyPremiumSession(mobileSite);
+  } = useSpotifyPremiumSession(true);
   const [url, setUrl] = useState("");
   const [trackId, setTrackId] = useState<string | null>(null);
   const [track, setTrack] = useState<TrackDetails | null>(null);
@@ -878,6 +878,8 @@ export default function Home() {
           ? "Estamos validando tu cuenta de Spotify Premium."
           : mobileSite && spotifyPremiumStatus === "free"
             ? "Spotify Premium es obligatorio para jugar desde un teléfono o tablet."
+            : mobileSite && spotifyPremiumStatus === "not_allowed"
+              ? "Esta cuenta debe ser agregada como tester en Spotify Developer Dashboard antes de poder jugar."
             : mobileSite && spotifyPremiumStatus !== "premium"
               ? "Conectá una cuenta Spotify Premium para jugar desde el móvil."
               : mobileSite && spotifyStatus === "premium-required"
@@ -2140,8 +2142,27 @@ export default function Home() {
               </button>
             </form>
             <div className="mb-8 flex max-w-2xl flex-wrap items-center gap-3 text-sm">
-              <a href="/api/spotify/login" className="rounded-xl bg-emerald-500/15 px-4 py-2 font-bold text-emerald-200">Conectar Spotify</a>
-              <span className="text-zinc-500">Spotify exige conectar la cuenta y sólo permite playlists propias o colaborativas.</span>
+              {spotifyPremiumStatus === "premium" ? (
+                <>
+                  <span className="rounded-xl bg-emerald-500/15 px-4 py-2 font-bold text-emerald-200">✓ Spotify conectado</span>
+                  <a href="/api/spotify/login?returnTo=%2F" className="text-zinc-500 underline">Cambiar cuenta</a>
+                </>
+              ) : spotifyPremiumStatus === "free" ? (
+                <>
+                  <span className="rounded-xl bg-amber-500/15 px-4 py-2 font-bold text-amber-200">Spotify conectado · plan gratuito</span>
+                  <a href="/api/spotify/login?returnTo=%2F" className="text-zinc-500 underline">Cambiar cuenta</a>
+                </>
+              ) : spotifyPremiumStatus === "not_allowed" ? (
+                <>
+                  <span className="rounded-xl bg-red-500/15 px-4 py-2 font-bold text-red-200">Cuenta no autorizada como tester</span>
+                  <a href="/api/spotify/login?returnTo=%2F" className="text-zinc-400 underline">Usar otra cuenta</a>
+                </>
+              ) : spotifyPremiumStatus === "loading" ? (
+                <span className="text-zinc-500">Comprobando conexión de Spotify…</span>
+              ) : (
+                <a href="/api/spotify/login?returnTo=%2F" className="rounded-xl bg-emerald-500/15 px-4 py-2 font-bold text-emerald-200">Conectar Spotify</a>
+              )}
+              <span className="text-zinc-500">Spotify sólo permite importar playlists propias o colaborativas.</span>
             </div>
             {playlistMessage && <p className="mb-6 max-w-2xl rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-zinc-300">{playlistMessage}</p>}
             {searchResults.length > 0 && (

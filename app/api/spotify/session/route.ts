@@ -88,14 +88,18 @@ export async function GET() {
     return response;
   } catch (error) {
     console.error("Spotify session error", error);
+    const notAllowed = String(error).includes("SPOTIFY_PROFILE_403");
     return NextResponse.json(
       {
         connected: false,
         premium: false,
         connectUrl: "/api/spotify/login",
-        error: "No se pudo validar la cuenta de Spotify.",
+        code: notAllowed ? "spotify_user_not_allowed" : "spotify_session_error",
+        error: notAllowed
+          ? "Esta cuenta no está autorizada como tester en Spotify."
+          : "No se pudo validar la cuenta de Spotify.",
       },
-      { status: 401, headers: { "Cache-Control": "no-store" } },
+      { status: notAllowed ? 403 : 401, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

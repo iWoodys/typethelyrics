@@ -12,6 +12,7 @@ export type SpotifyPremiumSessionStatus =
   | "disconnected"
   | "free"
   | "premium"
+  | "not_allowed"
   | "error";
 
 export function useSpotifyPremiumSession(enabled: boolean) {
@@ -37,7 +38,11 @@ export function useSpotifyPremiumSession(enabled: boolean) {
       credentials: "same-origin",
     })
       .then(async (response) => {
-        const payload = (await response.json()) as SpotifySessionPayload;
+        const payload = (await response.json()) as SpotifySessionPayload & {
+          code?: string;
+        };
+        if (response.status === 403 && payload.code === "spotify_user_not_allowed")
+          return "not_allowed" as const;
         if (!response.ok) throw new Error("SPOTIFY_SESSION");
         return classifySpotifyPremiumSession(payload);
       })

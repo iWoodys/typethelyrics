@@ -16,13 +16,18 @@ export function SpotifyPremiumGate({
 }: SpotifyPremiumGateProps) {
   const loading = status === "loading";
   const free = status === "free";
+  const notAllowed = status === "not_allowed";
   const title = loading
     ? "Validando Spotify Premium…"
+    : notAllowed
+      ? "Cuenta no autorizada por Spotify"
     : free
       ? "Esta cuenta no tiene Spotify Premium"
       : "Conectá Spotify Premium para jugar en móvil";
   const detail = loading
     ? "Estamos comprobando tu suscripción y los permisos de reproducción."
+    : notAllowed
+      ? "El administrador debe agregar el correo de esta cuenta en Spotify Developer Dashboard → Users Management."
     : free
       ? "La versión móvil necesita reproducción bajo demanda y un reloj preciso. Podés seguir jugando gratis desde una computadora."
       : "En computadoras Spotify sigue funcionando como antes. Este requisito se aplica únicamente a teléfonos y tablets.";
@@ -47,7 +52,7 @@ export function SpotifyPremiumGate({
             href={connectHref}
             className="rounded-xl bg-emerald-400 px-3 py-3 text-center text-sm font-black text-emerald-950"
           >
-            {free ? "Conectar otra cuenta" : "Conectar Spotify"}
+            {free || notAllowed ? "Usar otra cuenta" : "Conectar Spotify"}
           </a>
           <button
             type="button"
