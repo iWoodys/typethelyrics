@@ -96,7 +96,7 @@ export async function GET() {
         connectUrl: "/api/spotify/login",
         code: notAllowed ? "spotify_user_not_allowed" : "spotify_session_error",
         error: notAllowed
-          ? "Esta cuenta no está autorizada como tester en Spotify."
+          ? "Spotify no autorizó esta cuenta para usar la conexión de la aplicación."
           : "No se pudo validar la cuenta de Spotify.",
       },
       { status: notAllowed ? 403 : 401, headers: { "Cache-Control": "no-store" } },

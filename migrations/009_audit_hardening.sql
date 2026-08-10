@@ -12,7 +12,7 @@ create or replace function public.save_game_result(
 returns uuid language plpgsql security definer set search_path = public as $$
 declare result_id uuid; computed_rank text; score_cap integer; wpm_cap integer;
 begin
-  if auth.uid() is null then raise exception 'Tenes que iniciar sesion.'; end if;
+  if auth.uid() is null then raise exception 'Tienes que iniciar sesion.'; end if;
   if target_track_id !~ '^[A-Za-z0-9]{10,30}$'
     or target_mode not in ('relaxed','rhythm','expert')
     or target_duration_ms not between 10000 and 1800000
@@ -63,7 +63,7 @@ declare
   result public.users;
   base_name text;
 begin
-  if auth.uid() is null then raise exception 'Tenes que iniciar sesion.'; end if;
+  if auth.uid() is null then raise exception 'Tienes que iniciar sesion.'; end if;
   select * into result from public.users where id = auth.uid();
   if found then return result; end if;
 

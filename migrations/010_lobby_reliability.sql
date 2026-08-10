@@ -54,7 +54,7 @@ create or replace function public.join_lobby(room_code text)
 returns public.lobbies language plpgsql security definer set search_path = public as $$
 declare room public.lobbies; current_players integer;
 begin
-  if auth.uid() is null then raise exception 'Tenes que iniciar sesion.'; end if;
+  if auth.uid() is null then raise exception 'Tienes que iniciar sesion.'; end if;
   select * into room from public.lobbies
     where code=upper(trim(room_code)) and status='waiting' for update;
   if not found then raise exception 'La sala no existe o ya comenzo.'; end if;

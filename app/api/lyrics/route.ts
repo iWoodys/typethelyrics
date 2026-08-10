@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 export async function POST(request: Request) {
   const retryAfter = rateLimit(request, 'lyrics', 15);
   if (retryAfter) return NextResponse.json(
-    { error: 'Demasiadas solicitudes. Probá nuevamente en unos segundos.' },
+    { error: 'Demasiadas solicitudes. Prueba nuevamente en unos segundos.' },
     { status: 429, headers: { 'Retry-After': String(retryAfter) } },
   );
   try {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canTypeMultiplayerLine,
   GAME_MODES,
   multiplayerLinePolicy,
   MULTIPLAYER_GAME_MODE_DETAILS,
@@ -42,6 +43,34 @@ describe("multiplayerLinePolicy", () => {
   it("convierte modos inválidos a Normal", () => {
     expect(normalizeGameMode("removed-mode")).toBe("rhythm");
     expect(normalizeGameMode("expert")).toBe("expert");
+  });
+
+  it("habilita el teclado por el reloj compartido de la sala", () => {
+    expect(
+      canTypeMultiplayerLine({
+        started: true,
+        countdown: 0,
+        singerStarted: true,
+        finished: false,
+        allLinesComplete: false,
+        lineIndex: 2,
+        timedIndex: 2,
+      }),
+    ).toBe(true);
+  });
+
+  it("mantiene bloqueado el teclado antes de que empiece la voz", () => {
+    expect(
+      canTypeMultiplayerLine({
+        started: true,
+        countdown: 0,
+        singerStarted: false,
+        finished: false,
+        allLinesComplete: false,
+        lineIndex: 0,
+        timedIndex: 0,
+      }),
+    ).toBe(false);
   });
 });
 

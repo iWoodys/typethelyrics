@@ -32,7 +32,7 @@ describe("Spotify OAuth origins", () => {
     );
   });
 
-  it("sólo acepta retornos internos después de autorizar", () => {
+  it("solo acepta retornos internos después de autorizar", () => {
     expect(safeSpotifyReturnTo("/multiplayer?room=ABC123")).toBe(
       "/multiplayer?room=ABC123",
     );

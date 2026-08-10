@@ -322,7 +322,7 @@ begin
   select * into room from public.lobbies
   where id = target_lobby and status in ('waiting', 'finished')
     and exists (select 1 from public.lobby_players where lobby_id = target_lobby and user_id = auth.uid());
-  if not found then raise exception 'No se puede volver a esta lobby.'; end if;
+  if not found then raise exception 'No se puede volver a esta sala.'; end if;
   update public.lobbies set status = 'waiting', spotify_track_id = null, track_url = null,
     track_title = null, track_artist = null, image_url = null, duration_ms = null,
     lyrics = '[]'::jsonb, start_at = null, updated_at = now() where id = target_lobby;
@@ -409,7 +409,7 @@ create or replace function public.save_game_result(
 returns uuid language plpgsql security definer set search_path = public as $$
 declare result_id uuid; computed_rank text;
 begin
-  if auth.uid() is null then raise exception 'Tenés que iniciar sesión.'; end if;
+  if auth.uid() is null then raise exception 'Tienes que iniciar sesión.'; end if;
   if target_track_id !~ '^[A-Za-z0-9]{10,30}$'
     or target_mode not in ('relaxed', 'rhythm', 'expert')
     or target_score not between 0 and 1000000
@@ -475,7 +475,7 @@ declare room public.lobbies%rowtype;
 begin
   select * into room from public.lobbies
   where id = target_lobby and host_id = auth.uid() and status in ('waiting', 'finished');
-  if not found then raise exception 'Solo el anfitrión puede reiniciar esta lobby.'; end if;
+  if not found then raise exception 'Solo el anfitrión puede reiniciar esta sala.'; end if;
   update public.lobbies set status = 'waiting', spotify_track_id = null, track_url = null,
     track_title = null, track_artist = null, image_url = null, duration_ms = null,
     lyrics = '[]'::jsonb, start_at = null, updated_at = now() where id = target_lobby;

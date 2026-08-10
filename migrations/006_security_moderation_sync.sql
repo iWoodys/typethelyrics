@@ -27,7 +27,7 @@ create or replace function public.save_lyric_edit(
 returns uuid language plpgsql security definer set search_path = public as $$
 declare edit_id uuid; item jsonb; previous_ms integer := -1; current_ms integer; line_text text;
 begin
-  if auth.uid() is null then raise exception 'Tenés que iniciar sesión.'; end if;
+  if auth.uid() is null then raise exception 'Tienes que iniciar sesión.'; end if;
   if target_track_id !~ '^[A-Za-z0-9]{10,30}$' or jsonb_typeof(target_lyrics) <> 'array'
      or jsonb_array_length(target_lyrics) not between 1 and 2000 then raise exception 'La letra no es válida.'; end if;
   for item in select value from jsonb_array_elements(target_lyrics) loop

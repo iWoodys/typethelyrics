@@ -85,7 +85,7 @@ const SPOTIFY_ORIGIN = "https://open.spotify.com";
 
 function loadIframeApi() {
   if (typeof window === "undefined")
-    return Promise.reject(new Error("Spotify sólo está disponible en el navegador."));
+    return Promise.reject(new Error("Spotify solo está disponible en el navegador."));
   if (window.__typeTheLyricsSpotifyApi)
     return Promise.resolve(window.__typeTheLyricsSpotifyApi);
   if (iframeApiPromise) return iframeApiPromise;
@@ -363,7 +363,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
       }, 100);
 
       // Una conexión lenta no debe mandar al jugador a un iframe sin reloj.
-      // Esperamos al controlador; el iframe clásico queda sólo como respaldo
+      // Esperamos al controlador; el iframe clásico queda solo como respaldo
       // para escuchar, pero el juego sabrá que no puede sincronizarse con él.
       if (!useNativeFallback && mount) {
         fallbackTimer = window.setTimeout(activateFallback, 15_000);

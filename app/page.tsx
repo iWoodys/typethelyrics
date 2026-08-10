@@ -68,9 +68,7 @@ import {
   type SpotifyPlaybackState,
   type SpotifyControllerStatus,
 } from "@/components/spotify-embed";
-import { SpotifyPremiumGate } from "@/components/spotify-premium-gate";
 import { useSpotifyPremiumSession } from "@/components/spotify-premium-session";
-import { SpotifyWebPlayer } from "@/components/spotify-web-player";
 import {
   difficultyFor,
   GameMode,
@@ -184,18 +182,15 @@ const LS = {
   spotifyNotice: "ttl-spotify-notice-seen-v1",
 };
 const GUIDE_STEPS = [
-  { title: "1. Elegí una canción", text: "Buscala por nombre o pegá un enlace de una canción de Spotify. Para playlists, conectá Spotify: desde 2026 sólo se permiten playlists propias o colaborativas." },
-  { title: "2. Iniciá la reproducción", text: "Pulsá Play dentro de Spotify y después Iniciar partida. Si la canción tiene una introducción larga, la escritura permanecerá bloqueada hasta que realmente empiece la primera voz." },
-  { title: "3. Escribí cuando se ilumine", text: "Cuando aparezca «Escribí ahora», usá el teclado directamente. Entre versos el juego espera; si Spotify está pausado, la pantalla te lo indicará." },
-  { title: "4. Corregí la sincronización", text: "Si falla una sola canción, usá «Buscar mejor sincronización» para volver a elegir la mejor letra disponible. Si todas se escuchan adelantadas o atrasadas en tu equipo, usá «Sincronizar mi dispositivo» una vez; ese ajuste también se aplicará al multijugador." },
+  { title: "1. Elige una canción", text: "Búscala por nombre o pega un enlace de una canción de Spotify. Para importar listas de reproducción privadas, conecta Spotify." },
+  { title: "2. Inicia la reproducción", text: "Pulsa Play dentro de Spotify y después Iniciar partida. Si la canción tiene una introducción larga, la escritura permanecerá bloqueada hasta que realmente empiece la primera voz." },
+  { title: "3. Escribe cuando se ilumine", text: "Cuando aparezca «Escribe ahora», usa el teclado directamente. Entre versos el juego espera; si Spotify está pausado, la pantalla te lo indicará." },
+  { title: "4. Corrige la sincronización", text: "Si falla una sola canción, usa «Buscar mejor sincronización» para volver a elegir la mejor letra disponible. Si todas se escuchan adelantadas o atrasadas en tu equipo, usa «Sincronizar mi dispositivo» una vez; ese ajuste también se aplicará al multijugador." },
 ];
 
 export default function Home() {
   const mobileSite = useMobileSite();
-  const {
-    status: spotifyPremiumStatus,
-    refresh: refreshSpotifyPremium,
-  } = useSpotifyPremiumSession(true);
+  const { status: spotifyPremiumStatus } = useSpotifyPremiumSession(true);
   const [url, setUrl] = useState("");
   const [trackId, setTrackId] = useState<string | null>(null);
   const [track, setTrack] = useState<TrackDetails | null>(null);
@@ -330,7 +325,7 @@ export default function Home() {
       sessionStorage.removeItem(LS.calibrationReload);
       void loadSong(calibrationReload, true);
     }
-    // Esta recuperación sólo debe ejecutarse una vez después de recargar la página.
+    // Esta recuperación solo debe ejecutarse una vez después de recargar la página.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
@@ -447,9 +442,7 @@ export default function Home() {
     [],
   );
   const spotifyStartBlocked = mobileSite
-    ? spotifyPremiumStatus !== "premium" ||
-      spotifyStatus !== "ready" ||
-      !spotifyActivated
+    ? spotifyStatus !== "ready" || !spotifyActivated
     : spotifyStatus === "loading" ||
       spotifyStatus === "unavailable" ||
       spotifyStatus === "preview";
@@ -461,7 +454,6 @@ export default function Home() {
     setError("");
     setSpotifyActivated(false);
     setSpotifyStatus("loading");
-    if (mobileSite) refreshSpotifyPremium();
     spotifyRef.current?.retry();
   };
   useEffect(() => setSpotifyActivated(false), [trackId]);
@@ -874,23 +866,13 @@ export default function Home() {
   const startGame = () => {
     if (spotifyStartBlocked) {
       setError(
-        mobileSite && spotifyPremiumStatus === "loading"
-          ? "Estamos validando tu cuenta de Spotify Premium."
-          : mobileSite && spotifyPremiumStatus === "free"
-            ? "Spotify Premium es obligatorio para jugar desde un teléfono o tablet."
-            : mobileSite && spotifyPremiumStatus === "not_allowed"
-              ? "Esta cuenta debe ser agregada como tester en Spotify Developer Dashboard antes de poder jugar."
-            : mobileSite && spotifyPremiumStatus !== "premium"
-              ? "Conectá una cuenta Spotify Premium para jugar desde el móvil."
-              : mobileSite && spotifyStatus === "premium-required"
-                ? "Spotify rechazó esta cuenta porque no tiene Premium o necesita volver a autorizar los permisos."
-              : spotifyStatus === "loading"
-          ? "Esperá unos segundos: Spotify todavía está preparando el reproductor."
+        spotifyStatus === "loading"
+          ? "Espera unos segundos: Spotify todavía está preparando el reproductor."
           : spotifyStatus === "preview"
-            ? "Spotify sólo habilitó una vista previa de esta canción. Abrí Spotify, iniciá sesión y reintentá el reproductor."
+            ? "Spotify solo habilitó una vista previa de esta canción. Abre Spotify en este navegador, inicia sesión y vuelve a intentarlo."
             : mobileSite && !spotifyActivated
-              ? "Tocá Activar Spotify y esperá a escuchar la canción antes de comenzar."
-                : "Spotify no entregó un reloj de reproducción fiable. Recargá la página y desactivá bloqueadores para poder jugar sincronizado.",
+              ? "Pulsa Activar Spotify y espera a escuchar la canción antes de comenzar."
+                : "Spotify no proporcionó un reloj de reproducción fiable. Recarga la página y desactiva los bloqueadores para jugar de forma sincronizada.",
       );
       return;
     }
@@ -904,7 +886,7 @@ export default function Home() {
     localStorage.setItem(LS.spotifyNotice, "1");
     setSpotifyNoticeOpen(false);
     if (!spotifyStartBlocked) beginGame();
-    else setError("Spotify todavía no está listo. Esperá unos segundos y volvé a comenzar.");
+    else setError("Spotify todavía no está listo. Espera unos segundos y vuelve a comenzar.");
   };
 
   const handleTyping = (value: string) => {
@@ -980,7 +962,7 @@ export default function Home() {
       /(?:spotify:track:|spotify\.com\/(?:intl-[a-z]{2}(?:-[a-z]{2})?\/)?track\/)([a-zA-Z0-9]+)(?:[/?#]|$)/i,
     );
     if (!match) {
-      setError("Pegá un enlace válido de una canción de Spotify.");
+      setError("Pega un enlace válido de una canción de Spotify.");
       return;
     }
     setLoading(true);
@@ -1073,7 +1055,7 @@ export default function Home() {
     const spotifyState = new URLSearchParams(window.location.search).get("spotify");
     if (spotifyState) {
       setTab("library");
-      setPlaylistMessage(spotifyState === "connected" ? "Spotify quedó conectado. Ya podés importar una playlist propia o colaborativa." : "No se pudo conectar Spotify. Revisá que la URL de retorno esté habilitada.");
+      setPlaylistMessage(spotifyState === "connected" ? "Spotify quedó conectado. Ya puedes importar una lista de reproducción propia o colaborativa." : "No se pudo conectar Spotify. Revisa que la URL de retorno esté habilitada.");
     }
     if (requestedTrack && /^[a-zA-Z0-9]+$/.test(requestedTrack))
       void loadSong(`https://open.spotify.com/track/${requestedTrack}`);
@@ -1193,7 +1175,7 @@ export default function Home() {
     if (!trackId) return;
     const { data } = await supabase.auth.getUser();
     if (!data.user) {
-      setSyncMessage("Iniciá sesión para reportar una sincronización.");
+      setSyncMessage("Inicia sesión para reportar una sincronización.");
       return;
     }
     const { error: reportError } = await supabase.from("lyric_reports").upsert({
@@ -1273,7 +1255,7 @@ export default function Home() {
   const captureDeviceCalibration = () => {
     if (!lyrics.length || position < 250) {
       setDeviceCalibrationMessage(
-        "Primero reproducí la canción y esperá a escuchar la primera voz.",
+        "Primero reproduce la canción y espera a escuchar la primera voz.",
       );
       return;
     }
@@ -1325,7 +1307,7 @@ export default function Home() {
       setError(
         reason instanceof Error ? reason.message : "No se pudo importar",
       );
-      setPlaylistMessage(reason instanceof Error ? reason.message : "No se pudo importar la playlist.");
+      setPlaylistMessage(reason instanceof Error ? reason.message : "No se pudo importar la lista de reproducción.");
     } finally {
       setSearching(false);
     }
@@ -1546,14 +1528,14 @@ export default function Home() {
                   Mecanografía al ritmo de tu música
                 </span>
                 <h1 className={`${mobileSite ? "text-4xl" : "text-4xl sm:text-6xl"} font-black tracking-tight`}>
-                  Escribí la letra.
+                  Escribe la letra.
                   <br />
                   <span className="bg-gradient-to-r from-violet-400 to-cyan-300 bg-clip-text text-transparent">
-                    Sentí el ritmo.
+                    Siente el ritmo.
                   </span>
                 </h1>
                 <p className="mx-auto mt-5 max-w-xl text-zinc-400">
-                  Pegá una canción de Spotify o buscala por nombre. Las letras
+                  Pega una canción de Spotify o búscala por nombre. Las letras
                   aparecerán exactamente cuando empiece cada verso.
                 </p>
               </section>
@@ -1574,7 +1556,7 @@ export default function Home() {
                   <input
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
-                    placeholder="Pegá el enlace de Spotify..."
+                    placeholder="Pega el enlace de Spotify..."
                     className="h-14 w-full rounded-xl border border-white/10 bg-black/30 pl-12 pr-4 outline-none focus:border-violet-400"
                   />
                 </div>
@@ -1638,54 +1620,36 @@ export default function Home() {
                     </div>
                     </div>
                   </div>
-                  {mobileSite ? (
-                    spotifyPremiumStatus === "premium" ? (
-                      <SpotifyWebPlayer
-                        key={`premium-${trackId}`}
-                        ref={spotifyRef}
-                        trackId={trackId}
-                        durationMs={track.track_duration_ms}
-                        onControllerStatus={setSpotifyStatus}
-                        onPlaybackUpdate={handleSpotifyPlaybackUpdate}
-                      />
-                    ) : (
-                      <SpotifyPremiumGate
-                        status={spotifyPremiumStatus}
-                        onRefresh={refreshSpotifyPremium}
-                      />
-                    )
-                  ) : (
-                    <SpotifyEmbed
-                      key={trackId}
-                      ref={spotifyRef}
-                      trackId={trackId}
-                      durationMs={track.track_duration_ms}
-                      height={152}
-                      onControllerStatus={setSpotifyStatus}
-                      onPlaybackUpdate={handleSpotifyPlaybackUpdate}
-                    />
-                  )}
-                  {(!mobileSite || spotifyPremiumStatus === "premium") && spotifyStatus === "loading" && (
+                  <SpotifyEmbed
+                    key={trackId}
+                    ref={spotifyRef}
+                    trackId={trackId}
+                    durationMs={track.track_duration_ms}
+                    height={152}
+                    onControllerStatus={setSpotifyStatus}
+                    onPlaybackUpdate={handleSpotifyPlaybackUpdate}
+                  />
+                  {spotifyStatus === "loading" && (
                     <p className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3 text-sm text-cyan-100">
                       Preparando el reloj de Spotify…
                     </p>
                   )}
-                  {(!mobileSite || spotifyPremiumStatus === "premium") && spotifyStatus === "unavailable" && (
+                  {spotifyStatus === "unavailable" && (
                     <p role="alert" className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                      El reproductor visible puede reproducir audio, pero no entregó el reloj necesario para sincronizar el juego. Recargá la página o desactivá el bloqueador de contenido.
+                      El reproductor visible puede reproducir audio, pero no entregó el reloj necesario para sincronizar el juego. Recarga la página o desactiva el bloqueador de contenido.
                     </p>
                   )}
                   {!mobileSite && spotifyStatus === "fallback" && (
                     <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                      Spotify está usando el modo compatible. Pulsá Play dentro de Spotify y enseguida Comenzar partida; el juego mantendrá un reloj propio.
+                      Spotify está usando el modo compatible. Pulsa Play dentro de Spotify y enseguida Comenzar partida; el juego mantendrá un reloj propio.
                     </p>
                   )}
                   {spotifyStatus === "preview" && (
                     <p role="alert" className="rounded-xl border border-red-300/30 bg-red-400/10 p-3 text-sm text-red-100">
-                      Spotify sólo habilitó una vista previa. La partida permanecerá bloqueada para evitar que la música se corte.
+                      Spotify solo habilitó una vista previa. La partida permanecerá bloqueada para evitar que la música se corte.
                     </p>
                   )}
-                  {mobileSite && spotifyPremiumStatus === "premium" && !started && (
+                  {mobileSite && !started && (
                     <div className="grid grid-cols-2 gap-2 rounded-2xl border border-emerald-400/20 bg-emerald-400/[.06] p-3">
                       <button
                         type="button"
@@ -1704,10 +1668,12 @@ export default function Home() {
                         <RotateCcw size={16} /> Reintentar
                       </button>
                       <a
-                        href="/api/spotify/login"
+                        href="https://open.spotify.com/"
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="col-span-2 rounded-xl border border-emerald-400/20 px-3 py-2 text-center text-xs font-bold text-emerald-200"
                       >
-                        Reconectar Spotify Premium
+                        Abrir Spotify Web
                       </a>
                     </div>
                   )}
@@ -1840,8 +1806,8 @@ export default function Home() {
                           Sincronización para este navegador
                         </b>
                         <p className="mt-2 text-sm text-zinc-300">
-                          Reiniciá el audio y, apenas escuches la primera voz,
-                          presioná “La voz empezó ahora”. Este ajuste se hará
+                          Reinicia el audio y, apenas escuches la primera voz,
+                          presiona “La voz empezó ahora”. Este ajuste se hará
                           una sola vez y se aplicará a todas las canciones.
                         </p>
                         <p className="mt-2 text-sm italic text-zinc-400">
@@ -1889,15 +1855,15 @@ export default function Home() {
                         className={`mb-6 text-sm uppercase tracking-[.3em] ${canType ? "text-cyan-300" : "text-zinc-600"}`}
                       >
                         {!started
-                          ? "Prepará tus dedos"
+                          ? "Prepara tus dedos"
                           : allLinesComplete
                             ? "Letra completada · la canción continúa hasta el final"
                           : buffering
-                            ? "Spotify está cargando · esperá un momento"
+                            ? "Spotify está cargando · espera un momento"
                           : !playing
-                            ? "Spotify está pausado · presioná Play"
+                            ? "Spotify está pausado · presiona Play"
                           : canType
-                            ? "Escribí ahora"
+                            ? "Escribe ahora"
                             : `${lineIndex === 0 ? "Intro musical" : "Próximo verso"} · la voz entra en ${(lineWaitMs / 1000).toFixed(1)} s`}
                       </p>
                       <div
@@ -1989,7 +1955,7 @@ export default function Home() {
                       }}
                       disabled={!mobileSite && !canType}
                       aria-label="Escribir la letra actual"
-                      placeholder={canType ? "Escribí la frase…" : started ? "Esperá a que comience la voz…" : "Tocá aquí para preparar el teclado"}
+                      placeholder={canType ? "Escribe la frase…" : started ? "Espera a que comience la voz…" : "Toca aquí para preparar el teclado"}
                       className={mobileSite
                         ? "mobile-game-input mt-6 h-14 w-full rounded-xl border border-white/15 bg-black/35 px-4 text-base text-white outline-none placeholder:text-zinc-600 focus:border-cyan-300"
                         : "pointer-events-none absolute inset-0 opacity-0"}
@@ -2110,7 +2076,7 @@ export default function Home() {
           <section>
             <h1 className="mb-2 text-3xl font-black">Tu música</h1>
             <p className="mb-8 text-zinc-400">
-              Buscá canciones sin copiar enlaces, importá una playlist y retomá
+              Busca canciones sin copiar enlaces, importa una lista de reproducción y retoma
               tus favoritas.
             </p>
             <form onSubmit={doSearch} className="mb-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
@@ -2134,7 +2100,7 @@ export default function Home() {
               <input
                 value={playlistUrl}
                 onChange={(e) => setPlaylistUrl(e.target.value)}
-                placeholder="Enlace de una playlist propia o colaborativa"
+                placeholder="Enlace de una lista de reproducción propia o colaborativa"
                 className="h-12 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 outline-none"
               />
               <button className="h-12 rounded-xl border border-white/10 px-5 sm:h-auto">
@@ -2154,7 +2120,7 @@ export default function Home() {
                 </>
               ) : spotifyPremiumStatus === "not_allowed" ? (
                 <>
-                  <span className="rounded-xl bg-red-500/15 px-4 py-2 font-bold text-red-200">Cuenta no autorizada como tester</span>
+                  <span className="rounded-xl bg-red-500/15 px-4 py-2 font-bold text-red-200">Spotify no autorizó la importación para esta cuenta</span>
                   <a href="/api/spotify/login?returnTo=%2F" className="text-zinc-400 underline">Usar otra cuenta</a>
                 </>
               ) : spotifyPremiumStatus === "loading" ? (
@@ -2162,7 +2128,7 @@ export default function Home() {
               ) : (
                 <a href="/api/spotify/login?returnTo=%2F" className="rounded-xl bg-emerald-500/15 px-4 py-2 font-bold text-emerald-200">Conectar Spotify</a>
               )}
-              <span className="text-zinc-500">Spotify sólo permite importar playlists propias o colaborativas.</span>
+              <span className="text-zinc-500">Spotify solo permite importar listas propias o colaborativas.</span>
             </div>
             {playlistMessage && <p className="mb-6 max-w-2xl rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-zinc-300">{playlistMessage}</p>}
             {searchResults.length > 0 && (
@@ -2173,7 +2139,7 @@ export default function Home() {
               />
             )}
             <SongGrid
-              title="Playlist importada"
+              title="Lista de reproducción importada"
               songs={playlistTracks}
               onPick={(song) => loadSong(song.url)}
             />
@@ -2243,7 +2209,7 @@ export default function Home() {
                 Desafío diario
               </span>
               <h3 className="mt-2 text-xl font-bold">
-                Completá una canción con 95% de precisión
+                Completa una canción con 95% de precisión
               </h3>
               <p className="mt-1 text-zinc-400">
                 Premio: insignia diaria y 1.000 puntos extra.
@@ -2385,8 +2351,8 @@ export default function Home() {
               <div>
                 <h2 className="text-xl font-bold">Editor de sincronización</h2>
                 <p className="text-sm text-zinc-500">
-                  Marcá tiempos mientras suena la canción, dividí o uní versos y
-                  deshacé cambios.
+                  Marca tiempos mientras suena la canción, divide o une versos y
+                  deshaz cambios.
                 </p>
               </div>
               <div className="flex gap-2">
@@ -2412,7 +2378,7 @@ export default function Home() {
             <div className="border-b border-white/10 p-3 text-center text-sm text-zinc-400">
               Posición del reproductor:{" "}
               <b className="text-cyan-300">{(position / 1000).toFixed(2)}s</b> ·
-              Usá “Marcar” cuando empiece el verso
+              Usa “Marcar” cuando empiece el verso
             </div>
             <div className="flex-1 space-y-2 overflow-y-auto p-5">
               {draftLyrics.map((line, index) => (
@@ -2592,7 +2558,7 @@ export default function Home() {
               <button aria-label="Cerrar aviso" onClick={() => setSpotifyNoticeOpen(false)} className="rounded-full p-1 text-zinc-400 hover:bg-white/10"><X/></button>
             </div>
             <h2 id="spotify-notice-title" className="mt-6 text-3xl font-black">Antes de comenzar</h2>
-            <p className="mt-4 leading-relaxed text-zinc-300">Para escuchar la canción completa, iniciá sesión en Spotify desde este mismo navegador. Sin una sesión activa, Spotify puede reproducir solamente una vista previa de 30 segundos y la partida quedará incompleta.</p>
+            <p className="mt-4 leading-relaxed text-zinc-300">Para escuchar la canción completa, inicia sesión en Spotify desde este mismo navegador. Sin una sesión activa, Spotify puede reproducir solamente una vista previa de 30 segundos y la partida quedará incompleta.</p>
             <a href="https://open.spotify.com/" target="_blank" rel="noopener noreferrer" className="mt-6 block w-full rounded-xl border border-emerald-400/30 bg-emerald-400/10 py-3 text-center font-bold text-emerald-200">Abrir Spotify e iniciar sesión</a>
             <button onClick={acceptSpotifyNotice} className="mt-3 w-full rounded-xl bg-emerald-400 py-3 font-black text-emerald-950">Ya inicié sesión · comenzar</button>
             <p className="mt-4 text-center text-xs text-zinc-500">Este aviso se mostrará solamente esta vez.</p>

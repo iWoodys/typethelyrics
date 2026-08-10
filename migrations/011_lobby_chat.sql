@@ -35,7 +35,7 @@ declare
   sent_message public.lobby_messages;
 begin
   if auth.uid() is null then
-    raise exception 'Tenes que iniciar sesion.';
+    raise exception 'Tienes que iniciar sesion.';
   end if;
 
   clean_body := btrim(regexp_replace(coalesce(message_body, ''), '[[:space:]]+', ' ', 'g'));

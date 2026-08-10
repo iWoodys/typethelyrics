@@ -12,7 +12,7 @@ type PremiumAudit = { id: string; target_email: string; new_premium: boolean; ne
 
 const announcementError = (message: string) =>
   message.includes("publish_announcement") || message.includes("schema cache")
-    ? "Falta instalar el sistema de anuncios en Supabase. Ejecutá migrations/008_admin_announcements.sql en el SQL Editor."
+    ? "Falta instalar el sistema de anuncios en Supabase. Ejecuta migrations/008_admin_announcements.sql en el SQL Editor."
     : message;
 
 export default function AdminPage() {
@@ -91,7 +91,7 @@ export default function AdminPage() {
       target_email: premiumEmail.trim(), premium_days: parsedDays, change_reason: premiumReason.trim(),
     });
     setSavingPremium(false);
-    if (error) { setMessage(error.message.includes("set_user_premium") ? "Ejecutá migrations/010_lobby_reliability.sql en Supabase." : error.message); return; }
+    if (error) { setMessage(error.message.includes("set_user_premium") ? "Ejecuta migrations/010_lobby_reliability.sql en Supabase." : error.message); return; }
     setMessage(parsedDays === 0 ? "Premium retirado correctamente." : "Premium actualizado correctamente.");
     setPremiumEmail(""); setPremiumDays(""); setPremiumReason("");
     await load();
@@ -118,14 +118,14 @@ export default function AdminPage() {
 
     <section className="mt-8 rounded-3xl border border-amber-300/20 bg-amber-300/[.06] p-6">
       <h2 className="flex items-center gap-2 text-xl font-bold"><Crown className="text-amber-300"/> Administrar Premium</h2>
-      <p className="mt-2 text-sm text-zinc-400">Dejá los días vacíos para Premium permanente, usá 31 para un mes o 0 para retirarlo. Cada cambio queda auditado.</p>
+      <p className="mt-2 text-sm text-zinc-400">Deja los días vacíos para Premium permanente, usa 31 para un mes o 0 para retirarlo. Cada cambio queda auditado.</p>
       <form onSubmit={changePremium} className="mt-5 grid gap-3 md:grid-cols-2">
         <label className="text-sm text-zinc-300">Correo del jugador<input type="email" required value={premiumEmail} onChange={(event) => setPremiumEmail(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4"/></label>
         <label className="text-sm text-zinc-300">Días<input type="number" min="0" max="3650" value={premiumDays} onChange={(event) => setPremiumDays(event.target.value)} placeholder="Vacío = permanente" className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4"/></label>
         <label className="text-sm text-zinc-300 md:col-span-2">Motivo<input value={premiumReason} maxLength={300} onChange={(event) => setPremiumReason(event.target.value)} placeholder="Compra, premio, prueba…" className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4"/></label>
         <button disabled={savingPremium} className="flex w-fit items-center gap-2 rounded-xl bg-amber-300 px-5 py-3 font-bold text-black disabled:opacity-50"><Crown size={17}/>{savingPremium ? "Guardando…" : "Aplicar cambio"}</button>
       </form>
-      {premiumAudit.length > 0 && <div className="mt-6 overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-zinc-500"><tr><th className="py-2">Cuenta</th><th>Estado</th><th>Motivo</th><th>Fecha</th></tr></thead><tbody>{premiumAudit.map((entry) => <tr key={entry.id} className="border-t border-white/5"><td className="py-3 pr-4">{entry.target_email}</td><td className="pr-4">{entry.new_premium ? (entry.new_until ? `Hasta ${new Date(entry.new_until).toLocaleDateString("es-AR")}` : "Permanente") : "Retirado"}</td><td className="pr-4 text-zinc-400">{entry.reason || "Sin motivo"}</td><td className="text-zinc-500">{new Date(entry.created_at).toLocaleString("es-AR")}</td></tr>)}</tbody></table></div>}
+      {premiumAudit.length > 0 && <div className="mt-6 overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-zinc-500"><tr><th className="py-2">Cuenta</th><th>Estado</th><th>Motivo</th><th>Fecha</th></tr></thead><tbody>{premiumAudit.map((entry) => <tr key={entry.id} className="border-t border-white/5"><td className="py-3 pr-4">{entry.target_email}</td><td className="pr-4">{entry.new_premium ? (entry.new_until ? `Hasta ${new Date(entry.new_until).toLocaleDateString("es-ES")}` : "Permanente") : "Retirado"}</td><td className="pr-4 text-zinc-400">{entry.reason || "Sin motivo"}</td><td className="text-zinc-500">{new Date(entry.created_at).toLocaleString("es-ES")}</td></tr>)}</tbody></table></div>}
     </section>
 
     <h2 className="mt-8 text-xl font-bold">Correcciones pendientes ({edits.length})</h2>

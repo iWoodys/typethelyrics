@@ -12,7 +12,7 @@ export const MODE_INFO: Record<
 > = {
   relaxed: {
     name: "Fácil",
-    description: "La canción espera si quedás muy atrás.",
+    description: "La canción espera si te quedas muy atrás.",
   },
   rhythm: {
     name: "Normal",
@@ -30,16 +30,16 @@ export const GAME_MODE_DETAILS: Record<
 > = {
   relaxed: {
     name: "Fácil",
-    description: "Aprendé la letra sin que la música te deje atrás.",
+    description: "Aprende la letra sin que la música te deje atrás.",
     rules: [
       "La canción se pausa si no terminaste el verso.",
-      "Podés seguir escribiendo durante la pausa.",
+      "Puedes seguir escribiendo durante la pausa.",
       "Al completar la frase, la reproducción continúa.",
     ],
   },
   rhythm: {
     name: "Normal",
-    description: "Seguí los versos en el tiempo real de la canción.",
+    description: "Sigue los versos en el tiempo real de la canción.",
     rules: [
       "La canción nunca espera.",
       "Las frases incompletas quedan marcadas en rojo.",
@@ -63,7 +63,7 @@ export const MULTIPLAYER_GAME_MODE_DETAILS: typeof GAME_MODE_DETAILS = {
   ...GAME_MODE_DETAILS,
   relaxed: {
     name: "Fácil",
-    description: "Seguí la canción sin penalización por versos incompletos.",
+    description: "Sigue la canción sin penalización por versos incompletos.",
     rules: [
       "Los versos avanzan con la música para mantener sincronizada la sala.",
       "Una frase incompleta no resta puntos ni rompe el combo.",
@@ -76,6 +76,33 @@ export const multiplayerLinePolicy = (mode: GameMode) => ({
   advanceWithClock: true,
   penalizeMissed: mode !== "relaxed",
 });
+
+export function canTypeMultiplayerLine({
+  started,
+  countdown,
+  singerStarted,
+  finished,
+  allLinesComplete,
+  lineIndex,
+  timedIndex,
+}: {
+  started: boolean;
+  countdown: number | null;
+  singerStarted: boolean;
+  finished: boolean;
+  allLinesComplete: boolean;
+  lineIndex: number;
+  timedIndex: number;
+}) {
+  return (
+    started &&
+    countdown === 0 &&
+    singerStarted &&
+    !finished &&
+    !allLinesComplete &&
+    lineIndex <= timedIndex
+  );
+}
 
 export function shouldPauseEasyMode({
   mode,

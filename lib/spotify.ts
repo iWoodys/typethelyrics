@@ -274,7 +274,7 @@ export const getPlaylistTracks = async (playlistId: string, userToken: string) =
   const items: Array<{ item?: SpotifyTrack | null; track?: SpotifyTrack | null }> = [];
   for (let offset = 0; offset < 1000; offset += 50) {
     const page = await spotifyFetch<{ items: Array<{ item?: SpotifyTrack | null; track?: SpotifyTrack | null }>; next?: string | null }>(
-      `/playlists/${encodeURIComponent(playlistId)}/items?limit=50&offset=${offset}&market=AR`, userToken,
+      `/playlists/${encodeURIComponent(playlistId)}/items?limit=50&offset=${offset}&market=from_token`, userToken,
     );
     items.push(...page.items);
     if (!page.next || page.items.length < 50) break;

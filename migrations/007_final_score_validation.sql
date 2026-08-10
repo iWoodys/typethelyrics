@@ -8,7 +8,7 @@ create or replace function public.save_game_result(
 returns uuid language plpgsql security definer set search_path = public as $$
 declare result_id uuid; computed_rank text; score_cap integer; wpm_cap integer;
 begin
-  if auth.uid() is null then raise exception 'Tenés que iniciar sesión.'; end if;
+  if auth.uid() is null then raise exception 'Tienes que iniciar sesión.'; end if;
   if target_track_id !~ '^[A-Za-z0-9]{10,30}$'
     or target_mode not in ('relaxed','rhythm','expert')
     or target_duration_ms not between 10000 and 1800000
@@ -36,7 +36,7 @@ create or replace function public.delete_my_account()
 returns void language plpgsql security definer set search_path = public, auth as $$
 declare target_user uuid := auth.uid();
 begin
-  if target_user is null then raise exception 'Tenés que iniciar sesión.'; end if;
+  if target_user is null then raise exception 'Tienes que iniciar sesión.'; end if;
   delete from auth.users where id=target_user;
 end; $$;
 revoke all on function public.delete_my_account() from public;

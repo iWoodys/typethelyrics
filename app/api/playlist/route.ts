@@ -11,7 +11,7 @@ export async function POST(request: Request) {
   try {
     const { url } = await readJsonBody<{ url?: unknown }>(request, 2048);
     const id = String(url || '').match(/(?:spotify:playlist:|spotify\.com\/(?:intl-[a-z-]+\/)?playlist\/)([a-zA-Z0-9]+)/i)?.[1];
-    if (!id) return NextResponse.json({ error: 'Enlace de playlist inválido' }, { status: 400 });
+    if (!id) return NextResponse.json({ error: 'Enlace de lista de reproducción inválido' }, { status: 400 });
     const cookieStore = await cookies();
     let token = cookieStore.get('spotify_user_token')?.value;
     const refreshToken = cookieStore.get('spotify_refresh_token')?.value;
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
       return response;
     }
     if (!token) return NextResponse.json({
-      error: 'Conectá tu cuenta de Spotify para importar playlists propias o colaborativas.',
+      error: 'Conecta tu cuenta de Spotify para importar listas de reproducción propias o colaborativas.',
       requiresSpotifyAuth: true,
       connectUrl: '/api/spotify/login',
     }, { status: 401 });
@@ -33,9 +33,9 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : '';
     if (message === 'BODY_TOO_LARGE' || message === 'INVALID_JSON') return NextResponse.json({ error: 'Solicitud inválida.' }, { status: 400 });
     console.error(error);
-    if (message.includes('401')) return NextResponse.json({ error: 'La conexión con Spotify venció. Volvé a conectarla.', requiresSpotifyAuth: true, connectUrl: '/api/spotify/login' }, { status: 401 });
-    if (message.includes('403')) return NextResponse.json({ error: 'Spotify ahora sólo permite importar playlists que poseés o en las que sos colaborador, aunque otras playlists sean públicas.' }, { status: 403 });
-    if (message.includes('429')) return NextResponse.json({ error: 'Spotify recibió demasiadas solicitudes. Esperá un momento.' }, { status: 429 });
-    return NextResponse.json({ error: 'Spotify no pudo leer esa playlist. Verificá el enlace y que seas propietario o colaborador.' }, { status: 502 });
+    if (message.includes('401')) return NextResponse.json({ error: 'La conexión con Spotify venció. Vuelve a conectarla.', requiresSpotifyAuth: true, connectUrl: '/api/spotify/login' }, { status: 401 });
+    if (message.includes('403')) return NextResponse.json({ error: 'Spotify solo permite importar listas de reproducción que te pertenezcan o en las que seas colaborador, aunque otras listas sean públicas.' }, { status: 403 });
+    if (message.includes('429')) return NextResponse.json({ error: 'Spotify recibió demasiadas solicitudes. Espera un momento.' }, { status: 429 });
+    return NextResponse.json({ error: 'Spotify no pudo leer esa lista de reproducción. Verifica el enlace y que seas propietario o colaborador.' }, { status: 502 });
   }
 }

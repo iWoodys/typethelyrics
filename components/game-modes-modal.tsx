@@ -32,7 +32,7 @@ export function GameModesModal({
             </p>
             <h2 className="mt-2 text-3xl font-black">Modos de juego</h2>
             <p className="mt-2 text-zinc-400">
-              Elegí el desafío que mejor se adapte a tu ritmo.
+              Elige el desafío que mejor se adapte a tu ritmo.
             </p>
           </div>
           <button

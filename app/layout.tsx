@@ -5,7 +5,7 @@ const mobileSiteBootstrap = `try{var h=location.hostname.toLowerCase().replace(/
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://typethelyrics.sbs"),
-  title: "TypeTheLyrics - Escribí al ritmo de tu música",
+  title: "TypeTheLyrics - Escribe al ritmo de tu música",
   description: "Juego de mecanografía musical con letras sincronizadas, modos de juego, puntuación y progreso.",
   applicationName: "TypeTheLyrics",
   icons: {
@@ -22,16 +22,16 @@ export const metadata: Metadata = {
   creator: "TypeTheLyrics",
   publisher: "TypeTheLyrics",
   openGraph: {
-    title: "TypeTheLyrics - Escribí al ritmo de tu música",
+    title: "TypeTheLyrics - Escribe al ritmo de tu música",
     description: "Juego de mecanografía musical con letras sincronizadas y multijugador.",
     url: "https://typethelyrics.sbs",
     siteName: "TypeTheLyrics",
-    locale: "es_AR",
+    locale: "es_ES",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "TypeTheLyrics - Escribí al ritmo de tu música",
+    title: "TypeTheLyrics - Escribe al ritmo de tu música",
     description: "Juego de mecanografía musical con letras sincronizadas y multijugador.",
   },
   category: "Technology",
