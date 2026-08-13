@@ -11,16 +11,12 @@ import {
 import Link from "next/link";
 import Image from "next/image";
 import {
-  ChevronDown,
-  ChevronUp,
   Crown,
   Copy,
   Gamepad2,
   LogIn,
   LogOut,
-  Maximize2,
   MessageCircle,
-  Minimize2,
   Music2,
   Play,
   Radio,
@@ -29,8 +25,6 @@ import {
   Trophy,
   UserRound,
   Users,
-  Wifi,
-  WifiOff,
 } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
@@ -60,18 +54,6 @@ import {
   type SpotifyPlaybackState,
   type SpotifyControllerStatus,
 } from "@/components/spotify-embed";
-import { useMobileSite } from "@/components/mobile-site";
-import {
-  useFullscreenMode,
-  useMobileKeyboard,
-  useOnlineStatus,
-  useScreenWakeLock,
-} from "@/components/mobile-game";
-import {
-  activeTypedWord,
-  mobileVersePreview,
-  mobileVerseWindow,
-} from "@/lib/mobile-game";
 
 type Profile = {
   id: string;
@@ -165,7 +147,6 @@ function Avatar({
   );
 }
 export default function MultiplayerPage() {
-  const mobileSite = useMobileSite();
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [lobby, setLobby] = useState<Lobby | null>(null);
@@ -174,11 +155,6 @@ export default function MultiplayerPage() {
   const [chatText, setChatText] = useState("");
   const [chatError, setChatError] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
-  const [mobileChatOpen, setMobileChatOpen] = useState(false);
-  const [mobileRankingOpen, setMobileRankingOpen] = useState(false);
-  const [connectionState, setConnectionState] = useState<
-    "connected" | "reconnecting" | "offline"
-  >("connected");
   const [code, setCode] = useState("");
   const [songUrl, setSongUrl] = useState("");
   const [selectedMode, setSelectedMode] = useState<GameMode>("rhythm");
@@ -223,9 +199,6 @@ export default function MultiplayerPage() {
   const countdownPreparedForRef = useRef<string | null>(null);
   const countdownPlaySentForRef = useRef<string | null>(null);
   const countdownPauseTimerRef = useRef<number | null>(null);
-  const composingRef = useRef(false);
-  const wasOfflineRef = useRef(false);
-  const latestWallPositionRef = useRef(0);
   const [playbackPosition, setPlaybackPosition] = useState<number | null>(null);
   const [playbackUpdatedAt, setPlaybackUpdatedAt] = useState(0);
   const [playbackPaused, setPlaybackPaused] = useState(true);
@@ -233,17 +206,6 @@ export default function MultiplayerPage() {
   const [spotifyStatus, setSpotifyStatus] =
     useState<SpotifyControllerStatus>("loading");
   const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
-  const online = useOnlineStatus();
-  const mobileGameActive =
-    mobileSite &&
-    !!lobby &&
-    lobby.status !== "waiting" &&
-    lobby.status !== "finished" &&
-    !localFinished;
-  const mobileKeyboardOpen = useMobileKeyboard(mobileGameActive);
-  const wakeLockActive = useScreenWakeLock(mobileGameActive && !!startedAt);
-  const { fullscreen, supported: fullscreenSupported, toggleFullscreen } =
-    useFullscreenMode();
 
   useEffect(
     () => () => {
@@ -252,15 +214,6 @@ export default function MultiplayerPage() {
     },
     [],
   );
-
-  useEffect(() => {
-    if (!online) {
-      wasOfflineRef.current = true;
-      setConnectionState("offline");
-    } else if (wasOfflineRef.current) {
-      setConnectionState("reconnecting");
-    }
-  }, [online]);
 
   const synchronizeServerClock = useCallback(async () => {
     const samples: Array<{ offset: number; roundTrip: number }> = [];
@@ -333,7 +286,7 @@ export default function MultiplayerPage() {
   }, []);
 
   const loadRoom = useCallback(async (roomId: string) => {
-    const [roomResult, playersResult] = await Promise.all([
+    const [{ data: room }, { data: memberRows }] = await Promise.all([
       supabase.from("lobbies").select("*").eq("id", roomId).single(),
       supabase
         .from("lobby_players")
@@ -343,19 +296,6 @@ export default function MultiplayerPage() {
         .eq("lobby_id", roomId)
         .order("joined_at"),
     ]);
-    const { data: room, error: roomError } = roomResult;
-    const { data: memberRows, error: playersError } = playersResult;
-    if (roomError?.code === "PGRST116") {
-      setLobby(null);
-      setPlayers([]);
-      setError("La sala ya no está disponible.");
-      history.replaceState(null, "", "/multiplayer");
-      return false;
-    }
-    if (roomError || playersError) {
-      setConnectionState(navigator.onLine ? "reconnecting" : "offline");
-      return false;
-    }
     if (room) {
       const typedRoom = {
         ...room,
@@ -365,8 +305,6 @@ export default function MultiplayerPage() {
       setSelectedMode(typedRoom.game_mode);
     }
     if (memberRows) setPlayers(memberRows as unknown as Player[]);
-    setConnectionState("connected");
-    return true;
   }, []);
 
   useEffect(() => {
@@ -513,18 +451,7 @@ export default function MultiplayerPage() {
         },
         () => void loadMessages(roomId),
       )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          setConnectionState("connected");
-          void loadRoom(roomId);
-        } else if (
-          status === "CHANNEL_ERROR" ||
-          status === "TIMED_OUT" ||
-          status === "CLOSED"
-        ) {
-          setConnectionState(navigator.onLine ? "reconnecting" : "offline");
-        }
-      });
+      .subscribe();
     return () => {
       void supabase.removeChannel(channel);
     };
@@ -532,7 +459,6 @@ export default function MultiplayerPage() {
 
   useEffect(() => {
     if (!lobby?.id || lobby.status !== "waiting") {
-      setMobileChatOpen(false);
       setChatText("");
       setChatError("");
       return;
@@ -548,10 +474,11 @@ export default function MultiplayerPage() {
     if (!lobby?.id || !authUser) return;
     const beat = () => void supabase.rpc("heartbeat_lobby", { target_lobby: lobby.id }).then(({ error: heartbeatError }) => {
       if (heartbeatError) {
-        setConnectionState(navigator.onLine ? "reconnecting" : "offline");
-        return;
+        setLobby(null);
+        setPlayers([]);
+        setError("La sala ya no está disponible.");
+        history.replaceState(null, "", "/multiplayer");
       }
-      setConnectionState("connected");
     });
     beat();
     const timer = window.setInterval(beat, 15_000);
@@ -935,7 +862,6 @@ export default function MultiplayerPage() {
 
   const roomClock = clock + serverClockOffset;
   const wallPosition = startedAt ? Math.max(0, roomClock - startedAt) : 0;
-  latestWallPositionRef.current = wallPosition;
   // El reloj compartido manda: una pausa o reinicio local de Spotify nunca puede
   // atrasar las letras ni extender la partida para un solo jugador.
   const gamePosition = Math.max(0, wallPosition + deviceOffsetMs);
@@ -946,44 +872,6 @@ export default function MultiplayerPage() {
     ? null
     : estimatedPlaybackPosition - wallPosition;
   const synchronized = playbackDrift === null || wallPosition < 1_000 || Math.abs(playbackDrift) <= 1_500;
-
-  useEffect(() => {
-    if (!lobby?.id) return;
-    let cancelled = false;
-    const recover = async () => {
-      if (!navigator.onLine) return;
-      setConnectionState("reconnecting");
-      const restored = await loadRoom(lobby.id);
-      await synchronizeServerClock();
-      if (lobby.status === "waiting") await loadMessages(lobby.id);
-      if (cancelled || !restored) return;
-      wasOfflineRef.current = false;
-      setConnectionState("connected");
-      if (startedAt && !localFinished) {
-        spotifyRef.current?.seek(latestWallPositionRef.current / 1000);
-        sendPlayer("play");
-      }
-    };
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") void recover();
-    };
-    if (online && wasOfflineRef.current) void recover();
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
-  }, [
-    loadMessages,
-    loadRoom,
-    lobby?.id,
-    lobby?.status,
-    localFinished,
-    online,
-    sendPlayer,
-    startedAt,
-    synchronizeServerClock,
-  ]);
 
   useEffect(() => {
     if (
@@ -1079,14 +967,6 @@ export default function MultiplayerPage() {
     );
     return Math.floor(ratio * currentLine.words.split(/\s+/).length);
   }, [currentLine, gamePosition, lineIndex, lyrics]);
-  const currentDisplayText = currentLine?.words || "";
-  const mobileFocusWord = normalizedTyped
-    ? activeTypedWord(normalizedTyped)
-    : currentWord;
-  const currentMobileVerse = useMemo(
-    () => mobileVerseWindow(currentDisplayText, mobileFocusWord, 5),
-    [currentDisplayText, mobileFocusWord],
-  );
   const showLineFeedback = useCallback(
     (type: "correct" | "partial" | "missed") => {
       setLineFeedback(type);
@@ -1101,12 +981,6 @@ export default function MultiplayerPage() {
   useEffect(() => {
     if (canType) inputRef.current?.focus();
   }, [canType, lineIndex]);
-  useEffect(() => {
-    if (!mobileKeyboardOpen || !mobileGameActive) return;
-    window.requestAnimationFrame(() =>
-      inputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }),
-    );
-  }, [canType, lineIndex, mobileGameActive, mobileKeyboardOpen]);
 
   useEffect(() => {
     if (
@@ -1493,9 +1367,9 @@ export default function MultiplayerPage() {
 
   const inGame = lobby.status !== "waiting";
   return (
-    <main className={`${mobileGameActive ? "mobile-game-shell" : "min-h-screen"} bg-[#07080d] text-white ${mobileGameActive ? "p-0" : mobileSite ? "p-3" : "p-4"}`}>
-      <div className={`mx-auto max-w-6xl ${mobileGameActive ? "mobile-game-stage" : mobileSite ? "py-3" : "py-6"}`}>
-        {!mobileGameActive && <header className="flex flex-wrap items-center justify-between gap-3">
+    <main className="min-h-screen bg-[#07080d] p-4 text-white">
+      <div className="mx-auto max-w-6xl py-6">
+        <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3"><Link href="/" className="font-bold">TypeTheLyrics</Link>
             <button disabled={working} onClick={() => void leaveLobby()} className="flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-zinc-400 hover:text-white disabled:opacity-50"><LogOut size={14}/> Salir</button>
           </div>
@@ -1513,31 +1387,25 @@ export default function MultiplayerPage() {
               <span className="text-xs text-emerald-300">Copiado</span>
             )}
           </div>
-          <span className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${connectionState === "connected" ? "bg-emerald-400/10 text-emerald-300" : connectionState === "offline" ? "bg-red-400/10 text-red-300" : "bg-amber-400/10 text-amber-200"}`}>
-            {connectionState === "connected" ? <Wifi size={13} /> : <WifiOff size={13} />}
-            {connectionState === "connected" ? "Conectado" : connectionState === "offline" ? "Sin conexión" : "Reconectando"}
-          </span>
-        </header>}
+        </header>
         {error && (
           <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-red-300">
             {error}
           </p>
         )}
-        <div className={`${mobileGameActive ? "grid gap-0" : "mt-6 grid gap-5 lg:grid-cols-[1fr_320px]"}`}>
-          <section className={`${mobileGameActive ? "p-2" : "rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7"}`}>
+        <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_320px]">
+          <section className="rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7">
             {lobby.spotify_track_id && (
-              <div className={mobileGameActive ? "mobile-background-player" : ""}>
-                <SpotifyEmbed
-                  key={lobby.spotify_track_id}
-                  ref={spotifyRef}
-                  trackId={lobby.spotify_track_id}
-                  durationMs={lobby.duration_ms || 0}
-                  onPlaybackUpdate={handlePlaybackUpdate}
-                  onControllerStatus={setSpotifyStatus}
-                />
-              </div>
+              <SpotifyEmbed
+                key={lobby.spotify_track_id}
+                ref={spotifyRef}
+                trackId={lobby.spotify_track_id}
+                durationMs={lobby.duration_ms || 0}
+                onPlaybackUpdate={handlePlaybackUpdate}
+                onControllerStatus={setSpotifyStatus}
+              />
             )}
-            {lobby.spotify_track_id && spotifyStatus === "loading" && !mobileGameActive && (
+            {lobby.spotify_track_id && spotifyStatus === "loading" && (
               <p className="mt-3 rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3 text-sm text-cyan-100">
                 Preparando el reloj de Spotify…
               </p>
@@ -1547,7 +1415,7 @@ export default function MultiplayerPage() {
                 Spotify no entregó el reloj necesario para jugar sincronizado. Recargá la página o desactivá el bloqueador de contenido.
               </p>
             )}
-            {lobby.spotify_track_id && spotifyStatus === "fallback" && !mobileGameActive && (
+            {lobby.spotify_track_id && spotifyStatus === "fallback" && (
               <p className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
                 Spotify está usando el modo compatible. Ya podés marcarte como listo; al comenzar, la sala usará su reloj compartido.
               </p>
@@ -1662,7 +1530,7 @@ export default function MultiplayerPage() {
               </div>
             )}
             {!inGame && lobby.track_title && (
-              <div className={`mt-5 flex items-center justify-between gap-3 ${mobileSite ? "flex-col items-stretch" : ""}`}>
+              <div className="mt-5 flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-2xl font-black">{lobby.track_title}</h2>
                   <p className="text-zinc-400">{lobby.track_artist}</p>
@@ -1677,7 +1545,7 @@ export default function MultiplayerPage() {
                   <button
                     disabled={!allReady || !allAudioReady || spotifyStatus === "loading" || spotifyStatus === "unavailable"}
                     onClick={startLobby}
-                    className={`flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30 ${mobileSite ? "w-full" : ""}`}
+                    className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30"
                   >
                     <Play size={18} /> Iniciar
                   </button>
@@ -1685,46 +1553,11 @@ export default function MultiplayerPage() {
                   <button
                     onClick={toggleReady}
                     disabled={updatingReady}
-                    className={`rounded-xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-40 ${mobileSite ? "w-full" : ""} ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
+                    className={`rounded-xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-40 ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
                   >
                     {updatingReady ? "Guardando…" : me?.ready ? "¡Listo!" : "Estoy listo"}
                   </button>
                 )}
-              </div>
-            )}
-            {mobileSite && inGame && (
-              <div className={mobileGameActive ? "mb-2 rounded-xl border border-white/10 bg-white/[.04] p-2" : "mt-5"}>
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <b className="text-sm">Clasificación en vivo</b>
-                    <span className={`flex items-center gap-1 text-[10px] font-bold ${connectionState === "connected" ? "text-emerald-300" : connectionState === "offline" ? "text-red-300" : "text-amber-200"}`}>
-                      {connectionState === "connected" ? <Wifi size={11} /> : <WifiOff size={11} />}
-                      {connectionState === "connected" ? "En línea" : connectionState === "offline" ? "Sin conexión" : "Reconectando"}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setMobileRankingOpen((open) => !open)}
-                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-zinc-400"
-                  >
-                    {players.length}/8
-                    {mobileRankingOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  </button>
-                </div>
-                <div className="mobile-scrollbar-none flex gap-2 overflow-x-auto pb-1">
-                  {(mobileRankingOpen ? sortedPlayers : sortedPlayers.slice(0, 3)).map((player, index) => (
-                    <div
-                      key={player.user_id}
-                      className={`min-w-[145px] rounded-xl border px-3 py-2 ${index === 0 ? "border-amber-300/30 bg-amber-300/10" : "border-white/10 bg-black/20"}`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <b className="truncate text-xs">#{index + 1} {player.users.username}</b>
-                        <span className="text-xs font-black text-violet-300">{player.score.toLocaleString()}</span>
-                      </div>
-                      <p className="mt-1 text-[10px] text-zinc-500">{player.accuracy}% · {player.wpm} ppm</p>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
             {inGame && (
@@ -1739,16 +1572,11 @@ export default function MultiplayerPage() {
                       <p className="mt-4 text-sm text-amber-200">
                         Spotify se está preparando y comenzará automáticamente.
                       </p>
-                      {mobileSite && (
-                        <p className="mt-2 text-xs text-cyan-200">
-                          Al terminar la cuenta, tocá el campo de escritura para abrir el teclado.
-                        </p>
-                      )}
                     </div>
                   </div>
                 ) : (
                   <>
-                    <div className={`${mobileGameActive ? "mb-2 rounded-xl border border-white/10 bg-white/[.04] p-3" : "mb-4"} flex flex-wrap items-center justify-between gap-3 text-sm`}>
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm">
                       <span className="text-zinc-400">
                         Puntuación{" "}
                         <b className="text-white">{score.toLocaleString()}</b>
@@ -1759,21 +1587,6 @@ export default function MultiplayerPage() {
                       <span className="text-zinc-400">
                         Combo <b className="text-cyan-300">{combo}x</b>
                       </span>
-                      {mobileGameActive && (
-                        <span className="text-[10px] text-zinc-600">
-                          {wakeLockActive ? "Pantalla activa" : "Protección de pantalla"}
-                        </span>
-                      )}
-                      {mobileGameActive && fullscreenSupported && (
-                        <button
-                          type="button"
-                          onClick={() => void toggleFullscreen()}
-                          aria-label={fullscreen ? "Salir de pantalla completa" : "Usar pantalla completa"}
-                          className="rounded-lg border border-white/10 p-2 text-zinc-300"
-                        >
-                          {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-                        </button>
-                      )}
                     </div>
                     {!synchronized && (
                       <div role="status" className="mb-4 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-center text-sm text-amber-100">
@@ -1799,7 +1612,7 @@ export default function MultiplayerPage() {
                     )}
                     <div
                       onClick={() => inputRef.current?.focus()}
-                      className={`mobile-typing-card relative cursor-text overflow-hidden border bg-gradient-to-b from-white/[.07] to-white/[.02] text-center transition-all duration-200 ${mobileGameActive ? `${mobileKeyboardOpen ? "min-h-0" : "min-h-[52dvh]"} rounded-2xl p-4` : mobileSite ? "min-h-[280px] rounded-3xl p-4" : "min-h-[330px] rounded-3xl p-6 sm:p-10"} ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
+                      className={`relative min-h-[330px] cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] p-6 text-center transition-all duration-200 sm:p-10 ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
                     >
                       {lineFeedback && (
                         <div
@@ -1813,7 +1626,7 @@ export default function MultiplayerPage() {
                         </div>
                       )}
                       <p
-                        className={`${mobileSite ? "mb-4 mt-10 text-xs" : "mb-6 mt-12 text-sm"} uppercase tracking-[.3em] ${canType ? "text-cyan-300" : "text-zinc-600"}`}
+                        className={`mb-6 mt-12 text-sm uppercase tracking-[.3em] ${canType ? "text-cyan-300" : "text-zinc-600"}`}
                       >
                         {allLinesComplete
                           ? "Letra completada · la canción continúa hasta el final"
@@ -1828,16 +1641,11 @@ export default function MultiplayerPage() {
                                   : "Canción completada"}
                       </p>
                       <div
-                        className={`min-h-24 font-bold leading-relaxed transition-opacity ${mobileSite ? "text-2xl" : "text-3xl"} ${!canType ? "opacity-35" : "opacity-100"}`}
+                        className={`min-h-24 text-3xl font-bold leading-relaxed transition-opacity ${!canType ? "opacity-35" : "opacity-100"}`}
                       >
-                        {currentLine ? (mobileSite
-                          ? currentMobileVerse.words
-                          : currentDisplayText.trim().split(/\s+/).filter(Boolean)
-                        ).map((word, visibleWordIndex) => {
-                          const wordIndex = mobileSite
-                            ? currentMobileVerse.startWord + visibleWordIndex
-                            : visibleWordIndex;
-                          return (
+                        {currentLine?.words
+                          .split(/\s+/)
+                          .map((word, wordIndex) => (
                             <span
                               key={wordIndex}
                               className={`mr-3 inline-block transition-all ${canType && wordIndex === currentWord ? "text-cyan-300 [text-shadow:0_0_22px_rgba(103,232,249,.5)]" : ""}`}
@@ -1867,20 +1675,10 @@ export default function MultiplayerPage() {
                                 );
                               })}
                             </span>
-                          );
-                        }) : "Preparando la letra…"}
+                          )) || "Preparando la letra…"}
                       </div>
-                      {mobileSite && currentMobileVerse.totalWords > currentMobileVerse.words.length && (
-                        <p className="mt-3 text-xs font-bold uppercase tracking-widest text-zinc-600">
-                          Palabras {currentMobileVerse.startWord + 1}–{currentMobileVerse.endWord} de {currentMobileVerse.totalWords}
-                        </p>
-                      )}
-                      <p className={`${mobileSite ? "mt-6 text-base" : "mt-8 text-xl"} text-zinc-600`}>
-                        {lyrics[lineIndex + 1]
-                          ? mobileSite
-                            ? mobileVersePreview(lyrics[lineIndex + 1].words)
-                            : lyrics[lineIndex + 1].words
-                          : "Último verso"}
+                      <p className="mt-8 text-xl text-zinc-600">
+                        {lyrics[lineIndex + 1]?.words || "Último verso"}
                       </p>
                       {!canType && currentLine && !allLinesComplete && (
                         <div className="mx-auto mt-6 h-1.5 max-w-xs overflow-hidden rounded-full bg-white/10">
@@ -1893,36 +1691,14 @@ export default function MultiplayerPage() {
                         </div>
                       )}
                       <input
+                        key={lineIndex}
                         ref={inputRef}
                         value={visibleTyped}
-                        onChange={(event) => {
-                          if (!composingRef.current) typeLine(event.target.value);
-                        }}
-                        onCompositionStart={() => {
-                          composingRef.current = true;
-                        }}
-                        onCompositionEnd={(event) => {
-                          composingRef.current = false;
-                          typeLine(event.currentTarget.value);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            inputRef.current?.focus();
-                          }
-                        }}
+                        onChange={(event) => typeLine(event.target.value)}
                         onPaste={(event) => event.preventDefault()}
-                        disabled={!mobileSite && !canType}
-                        aria-label="Escribir la letra actual"
-                        placeholder={canType ? "Escribí la frase…" : "Tocá aquí y esperá a que comience la voz…"}
-                        className={mobileSite
-                          ? "mobile-game-input mt-6 h-14 w-full rounded-xl border border-white/15 bg-black/35 px-4 text-left text-base text-white outline-none placeholder:text-zinc-600 focus:border-cyan-300"
-                          : "absolute inset-0 opacity-0"}
+                        disabled={!canType}
+                        className="absolute inset-0 opacity-0"
                         autoComplete="off"
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        inputMode="text"
-                        enterKeyHint="next"
                         spellCheck={false}
                       />
                     </div>
@@ -1931,7 +1707,7 @@ export default function MultiplayerPage() {
               </div>
             )}
           </section>
-          <aside className={`rounded-3xl border border-white/10 bg-white/[.04] p-5 ${mobileSite && inGame ? "hidden" : ""}`}>
+          <aside className="rounded-3xl border border-white/10 bg-white/[.04] p-5">
             <div className="flex items-center justify-between">
               <h2 className="font-bold">
                 {inGame ? "Clasificación en vivo" : "Jugadores"}
@@ -1970,53 +1746,14 @@ export default function MultiplayerPage() {
                 </div>
               ))}
             </div>
-            {!inGame && mobileSite && !mobileChatOpen && (
-              <button
-                type="button"
-                onClick={() => setMobileChatOpen(true)}
-                className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/20 bg-cyan-400/10 py-3 font-bold text-cyan-200"
-              >
-                <MessageCircle size={17} /> Abrir chat
-                {messages.length > 0 && (
-                  <span className="rounded-full bg-cyan-300 px-2 py-0.5 text-xs text-cyan-950">
-                    {messages.length}
-                  </span>
-                )}
-              </button>
-            )}
-            {!inGame && (!mobileSite || mobileChatOpen) && (
-              <>
-              {mobileSite && (
-                <button
-                  type="button"
-                  aria-label="Cerrar chat"
-                  onClick={() => setMobileChatOpen(false)}
-                  className="fixed inset-0 z-[60] bg-black/70"
-                />
-              )}
-              <div
-                role={mobileSite ? "dialog" : undefined}
-                aria-modal={mobileSite ? true : undefined}
-                aria-label={mobileSite ? "Chat de la sala" : undefined}
-                className={mobileSite
-                  ? "fixed inset-x-3 bottom-[calc(.75rem+env(safe-area-inset-bottom))] z-[70] max-h-[80dvh] overflow-y-auto rounded-3xl border border-white/15 bg-[#11131a] p-4 shadow-2xl"
-                  : "mt-6 border-t border-white/10 pt-5"}
-              >
+            {!inGame && (
+              <div className="mt-6 border-t border-white/10 pt-5">
                 <div className="flex items-center gap-2">
                   <MessageCircle size={17} className="text-cyan-300" />
                   <h2 className="font-bold">Chat de la sala</h2>
-                  {mobileSite && (
-                    <button
-                      type="button"
-                      onClick={() => setMobileChatOpen(false)}
-                      className="ml-auto rounded-lg border border-white/10 px-3 py-1 text-sm text-zinc-300"
-                    >
-                      Cerrar
-                    </button>
-                  )}
                 </div>
                 <div
-                  className={`${mobileSite ? "h-[45dvh]" : "h-64"} mt-3 space-y-3 overflow-y-auto rounded-2xl border border-white/5 bg-black/20 p-3`}
+                  className="mt-3 h-64 space-y-3 overflow-y-auto rounded-2xl border border-white/5 bg-black/20 p-3"
                   aria-live="polite"
                 >
                   {messages.length === 0 && (
@@ -2075,7 +1812,6 @@ export default function MultiplayerPage() {
                   El chat se cierra automaticamente cuando comienza la partida.
                 </p>
               </div>
-              </>
             )}
           </aside>
         </div>

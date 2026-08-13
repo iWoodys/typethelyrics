@@ -1,7 +1,5 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata } from "next";
 import "./globals.css";
-
-const mobileSiteBootstrap = `try{var h=location.hostname.toLowerCase().replace(/\\.$/,"");var q=new URLSearchParams(location.search);document.documentElement.dataset.mobileSite=(h==="m.typethelyrics.sbs"||h==="m.localhost"||q.get("mobile")==="1"||innerWidth<=767)?"true":"false"}catch(e){}`;
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://typethelyrics.sbs"),
@@ -37,23 +35,13 @@ export const metadata: Metadata = {
   category: "Technology",
 };
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  viewportFit: "cover",
-  themeColor: "#07080d",
-};
-
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: mobileSiteBootstrap }} />
-      </head>
+    <html lang="es">
       <body className="antialiased">
         {children}
       </body>

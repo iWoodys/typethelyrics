@@ -29,9 +29,7 @@ import {
   Keyboard,
   Medal,
   Merge,
-  Maximize2,
   MessageCircle,
-  Minimize2,
   Music2,
   Pause,
   Play,
@@ -55,12 +53,6 @@ import type {
   TrackDetails,
 } from "@/components/types";
 import { GameModesModal } from "@/components/game-modes-modal";
-import { useMobileSite } from "@/components/mobile-site";
-import {
-  useFullscreenMode,
-  useMobileKeyboard,
-  useScreenWakeLock,
-} from "@/components/mobile-game";
 import {
   SpotifyEmbed,
   type SpotifyEmbedCommand,
@@ -89,11 +81,6 @@ import {
   shouldCompleteLine,
   typingAlignment,
 } from "@/lib/typing";
-import {
-  activeTypedWord,
-  mobileVersePreview,
-  mobileVerseWindow,
-} from "@/lib/mobile-game";
 
 type SongCard = {
   id: string;
@@ -187,7 +174,6 @@ const GUIDE_STEPS = [
 ];
 
 export default function Home() {
-  const mobileSite = useMobileSite();
   const [url, setUrl] = useState("");
   const [trackId, setTrackId] = useState<string | null>(null);
   const [track, setTrack] = useState<TrackDetails | null>(null);
@@ -272,14 +258,6 @@ export default function Home() {
   const pausedTotalRef = useRef(0);
   const pausedForTypingRef = useRef(false);
   const startPlaybackTimerRef = useRef<number | null>(null);
-  const composingRef = useRef(false);
-  const mobileGameActive = mobileSite && started && !finished;
-  const mobileKeyboardOpen = useMobileKeyboard(mobileGameActive);
-  const wakeLockActive = useScreenWakeLock(
-    mobileGameActive && playing && !buffering,
-  );
-  const { fullscreen, supported: fullscreenSupported, toggleFullscreen } =
-    useFullscreenMode();
 
   useEffect(
     () => () => {
@@ -482,12 +460,6 @@ export default function Home() {
   useEffect(() => {
     if (canType) inputRef.current?.focus();
   }, [canType, lineIndex]);
-  useEffect(() => {
-    if (!mobileKeyboardOpen || !mobileGameActive) return;
-    window.requestAnimationFrame(() =>
-      inputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }),
-    );
-  }, [canType, lineIndex, mobileGameActive, mobileKeyboardOpen]);
   const showLineFeedback = useCallback(
     (type: "correct" | "partial" | "missed") => {
     setLineFeedback(type);
@@ -527,14 +499,6 @@ export default function Home() {
     );
     return Math.floor(ratio * current.words.split(/\s+/).length);
   }, [current, lyrics, lineIndex, effectivePosition]);
-  const currentDisplayText = noPunctuation ? target : current?.words || "";
-  const mobileFocusWord = normalizedTyped
-    ? activeTypedWord(normalizedTyped)
-    : currentWord;
-  const currentMobileVerse = useMemo(
-    () => mobileVerseWindow(currentDisplayText, mobileFocusWord, 5),
-    [currentDisplayText, mobileFocusWord],
-  );
 
   const finishGame = useCallback((finalStats?: {
     correct?: number;
@@ -824,7 +788,6 @@ export default function Home() {
     }, 180);
   }, [resetGame, sendPlayer]);
   const beginGame = () => {
-    if (mobileSite) inputRef.current?.focus();
     resetGame();
     setStarted(true);
     setPosition(0);
@@ -1309,11 +1272,11 @@ export default function Home() {
 
   return (
     <main
-      className={`${mobileGameActive ? "mobile-game-shell" : "min-h-screen"} text-white selection:bg-fuchsia-500/40 ${highContrast ? "bg-black" : "bg-[#07080d]"} ${reducedMotion ? "[&_*]:!transition-none [&_*]:!animate-none" : ""} ${mobileSite && !mobileGameActive ? "mobile-safe-bottom" : ""}`}
+      className={`min-h-screen text-white selection:bg-fuchsia-500/40 ${highContrast ? "bg-black" : "bg-[#07080d]"} ${reducedMotion ? "[&_*]:!transition-none [&_*]:!animate-none" : ""}`}
     >
       <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_20%_0%,rgba(124,58,237,.25),transparent_38%),radial-gradient(circle_at_85%_25%,rgba(6,182,212,.16),transparent_30%)]" />
-      {!mobileGameActive && <header className="sticky top-0 z-40 border-b border-white/10 bg-[#07080d]/85 backdrop-blur-xl">
-        <div className={`mx-auto flex max-w-7xl items-center justify-between px-4 ${mobileSite ? "py-2.5" : "py-4"}`}>
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#07080d]/85 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4">
           <button
             onClick={() => setTab("play")}
             className="flex items-center gap-3"
@@ -1321,11 +1284,11 @@ export default function Home() {
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-cyan-400 shadow-lg shadow-violet-500/20">
               <Keyboard />
             </span>
-            <span className={`${mobileSite ? "text-base" : "text-xl"} font-black tracking-tight`}>
+            <span className="text-xl font-black tracking-tight">
               TypeTheLyrics
             </span>
           </button>
-          <nav className={`${mobileSite ? "hidden" : "flex"} gap-1 rounded-xl bg-white/5 p-1 text-sm`}>
+          <nav className="flex gap-1 rounded-xl bg-white/5 p-1 text-sm">
             {(
               [
                 ["play", "Jugar", Music2],
@@ -1367,34 +1330,7 @@ export default function Home() {
             </a>
           </nav>
           <div className="flex gap-2">
-            {mobileSite && isAdmin && (
-              <Link
-                href="/admin"
-                aria-label="Administración"
-                className="rounded-xl border border-emerald-400/25 bg-emerald-400/10 p-2 text-emerald-200"
-              >
-                <ShieldCheck size={18} />
-              </Link>
-            )}
-            {mobileSite && (
-              <button
-                onClick={() => setModesOpen(true)}
-                aria-label="Modos de juego"
-                className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-2 text-cyan-200"
-              >
-                <Gamepad2 size={18} />
-              </button>
-            )}
-            {mobileSite && (
-              <button
-                onClick={() => { setGuideStep(0); setGuideOpen(true); }}
-                aria-label="Guía"
-                className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-2 text-emerald-200"
-              >
-                <HelpCircle size={18} />
-              </button>
-            )}
-            {isAdmin && !mobileSite && (
+            {isAdmin && (
               <Link
                 href="/admin"
                 className="flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-400/20"
@@ -1403,15 +1339,13 @@ export default function Home() {
                 <span className="hidden sm:inline">Admin</span>
               </Link>
             )}
-            {!mobileSite && (
-              <Link
-                href="/multiplayer"
-                className="flex items-center gap-2 rounded-xl border border-violet-400/20 bg-violet-400/10 px-3 py-2 text-sm text-violet-200 hover:bg-violet-400/20"
-              >
-                <Gamepad2 size={17} />
-                <span className="hidden sm:inline">Multijugador</span>
-              </Link>
-            )}
+            <Link
+              href="/multiplayer"
+              className="flex items-center gap-2 rounded-xl border border-violet-400/20 bg-violet-400/10 px-3 py-2 text-sm text-violet-200 hover:bg-violet-400/20"
+            >
+              <Gamepad2 size={17} />
+              <span className="hidden sm:inline">Multijugador</span>
+            </Link>
             <button
               onClick={() => setSettingsOpen(true)}
               aria-label="Configuración"
@@ -1449,55 +1383,18 @@ export default function Home() {
             </Link>
           </div>
         </div>
-      </header>}
+      </header>
 
-      {mobileSite && !mobileGameActive && (
-        <nav className="mobile-bottom-nav fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0b0c12]/95 px-2 pt-2 backdrop-blur-xl">
-          <div className="mx-auto grid max-w-lg grid-cols-5">
-            {(
-              [
-                ["play", "Jugar", Music2],
-                ["library", "Canciones", BookOpen],
-                ["progress", "Progreso", BarChart3],
-              ] as const
-            ).map(([key, label, Icon]) => (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-bold ${tab === key ? "bg-violet-500/15 text-violet-200" : "text-zinc-500"}`}
-              >
-                <Icon size={20} />
-                {label}
-              </button>
-            ))}
-            <Link
-              href="/multiplayer"
-              className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-bold text-zinc-500"
-            >
-              <Gamepad2 size={20} />
-              Multi
-            </Link>
-            <Link
-              href={authUser ? "/account" : "/auth"}
-              className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-bold text-zinc-500"
-            >
-              <UserRound size={20} />
-              Cuenta
-            </Link>
-          </div>
-        </nav>
-      )}
-
-      <div className={`relative mx-auto max-w-7xl ${mobileGameActive ? "mobile-game-stage p-0" : `px-4 ${mobileSite ? "py-4" : "py-8"}`}`}>
+      <div className="relative mx-auto max-w-7xl px-4 py-8">
         {tab === "play" && (
           <>
             {!track && (
-              <section className={`mx-auto max-w-3xl text-center ${mobileSite ? "py-8" : "py-16"}`}>
+              <section className="mx-auto max-w-3xl py-16 text-center">
                 <span className="mb-5 inline-flex rounded-full border border-violet-400/30 bg-violet-400/10 px-4 py-2 text-sm text-violet-200">
                   <Sparkles size={16} className="mr-2" />
                   Mecanografía al ritmo de tu música
                 </span>
-                <h1 className={`${mobileSite ? "text-4xl" : "text-4xl sm:text-6xl"} font-black tracking-tight`}>
+                <h1 className="text-4xl font-black tracking-tight sm:text-6xl">
                   Escribí la letra.
                   <br />
                   <span className="bg-gradient-to-r from-violet-400 to-cyan-300 bg-clip-text text-transparent">
@@ -1510,7 +1407,7 @@ export default function Home() {
                 </p>
               </section>
             )}
-            <section className={`${mobileGameActive ? "hidden" : "mx-auto mb-8 max-w-4xl rounded-2xl border border-white/10 bg-white/[.04] p-4 shadow-2xl"}`}>
+            <section className="mx-auto mb-8 max-w-4xl rounded-2xl border border-white/10 bg-white/[.04] p-4 shadow-2xl">
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -1545,21 +1442,20 @@ export default function Home() {
             </section>
 
             {track && trackId && (
-              <section className={`grid lg:grid-cols-[340px_1fr] ${mobileGameActive ? "gap-0" : "gap-5"}`}>
-                <aside className={mobileGameActive ? "mobile-background-player" : "space-y-4"}>
-                  <div className={`overflow-hidden rounded-2xl border border-white/10 bg-white/[.04] p-4 ${mobileSite ? "flex items-center gap-4" : ""}`}>
+              <section className="grid gap-5 lg:grid-cols-[340px_1fr]">
+                <aside className="space-y-4">
+                  <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[.04] p-4">
                     {track.album_image && (
                       <Image
                         src={track.album_image}
                         alt="Portada"
                         width={320}
                         height={320}
-                        className={`${mobileSite ? "h-24 w-24 shrink-0" : "mb-4 aspect-square w-full"} rounded-xl object-cover`}
+                        className="mb-4 aspect-square w-full rounded-xl object-cover"
                       />
                     )}
-                    <div className={`${mobileSite ? "min-w-0 flex-1" : ""}`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
+                    <div className="flex items-start justify-between">
+                      <div>
                         <h2 className="text-xl font-bold">
                           {track.track_name}
                         </h2>
@@ -1576,7 +1472,7 @@ export default function Home() {
                         />
                       </button>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    <div className="mt-3 flex gap-2 text-xs">
                       <span className="rounded-full bg-violet-500/15 px-3 py-1 text-violet-300">
                         {difficultyFor(lyrics)}
                       </span>
@@ -1587,7 +1483,6 @@ export default function Home() {
                             ? "Sincronización personal"
                             : `Sincronización ${syncConfidence === "exact" ? "exacta" : syncConfidence === "high" ? "alta" : "media"}`}
                       </span>
-                    </div>
                     </div>
                   </div>
                   <SpotifyEmbed
@@ -1640,16 +1535,10 @@ export default function Home() {
                   </div>
                 </aside>
 
-                <div className={mobileGameActive ? "space-y-2 p-2" : "space-y-4"}>
-                  <div className={`${mobileGameActive ? "rounded-xl p-3" : "rounded-2xl p-5"} border border-white/10 bg-white/[.04]`}>
-                    <div className={`${mobileGameActive ? "mb-2" : "mb-4"} grid grid-cols-3 gap-2 sm:grid-cols-6`}>
-                      {(mobileGameActive
-                        ? [
-                            [Trophy, score.toLocaleString(), "Puntos"],
-                            [Flame, `${combo}x`, "Combo"],
-                            [Keyboard, `${lineIndex + 1}/${lyrics.length}`, "Verso"],
-                          ]
-                        : [
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-white/10 bg-white/[.04] p-5">
+                    <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                      {[
                         [Trophy, score.toLocaleString(), "Puntos"],
                         [Flame, `${combo}x`, "Combo"],
                         [
@@ -1664,7 +1553,7 @@ export default function Home() {
                           "Multiplicador",
                         ],
                         [Keyboard, `${lineIndex + 1}/${lyrics.length}`, "Verso"],
-                      ]).map(([Icon, value, label], i) => (
+                      ].map(([Icon, value, label], i) => (
                         <div
                           key={i}
                           className="rounded-xl bg-black/25 p-3 text-center"
@@ -1686,26 +1575,11 @@ export default function Home() {
                         style={{ width: `${progress}%` }}
                       />
                     </div>
-                    {mobileGameActive && (
-                      <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-zinc-500">
-                        <span>{wakeLockActive ? "Pantalla activa" : "Evitando suspensión cuando sea compatible"}</span>
-                        {fullscreenSupported && (
-                          <button
-                            type="button"
-                            onClick={() => void toggleFullscreen()}
-                            className="flex items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-zinc-300"
-                          >
-                            {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-                            {fullscreen ? "Salir" : "Pantalla completa"}
-                          </button>
-                        )}
-                      </div>
-                    )}
                   </div>
 
                   <div
                     onClick={() => inputRef.current?.focus()}
-                    className={`mobile-typing-card relative cursor-text overflow-hidden border bg-gradient-to-b from-white/[.07] to-white/[.02] transition-all duration-200 ${mobileGameActive ? `${mobileKeyboardOpen ? "min-h-0" : "min-h-[52dvh]"} rounded-2xl p-4` : mobileSite ? "min-h-[280px] rounded-3xl p-4" : "min-h-[330px] rounded-3xl p-6 sm:p-10"} ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
+                    className={`relative min-h-[330px] cursor-text overflow-hidden rounded-3xl border bg-gradient-to-b from-white/[.07] to-white/[.02] p-6 transition-all duration-200 sm:p-10 ${lineFeedback === "correct" ? "border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,.25)]" : lineFeedback === "partial" ? "border-amber-400 bg-amber-400/10 shadow-[0_0_40px_rgba(251,191,36,.2)]" : lineFeedback === "missed" ? "border-red-400 bg-red-400/10 shadow-[0_0_40px_rgba(248,113,113,.2)]" : "border-white/10"}`}
                   >
                     {lineFeedback && (
                       <div
@@ -1718,7 +1592,7 @@ export default function Home() {
                             : "✕ Frase incompleta"}
                       </div>
                     )}
-                    <div className={`${mobileGameActive ? "hidden" : mobileSite ? "relative mb-4 flex justify-center" : "absolute right-4 top-4 z-10 flex flex-wrap justify-end"} gap-2`}>
+                    <div className="absolute right-4 top-4 z-10 flex flex-wrap justify-end gap-2">
                       <button
                         disabled={started}
                         onClick={(event) => {
@@ -1790,7 +1664,7 @@ export default function Home() {
                         )}
                       </div>
                     )}
-                    <div className={deviceCalibrationOpen ? "mt-6 text-center" : mobileSite ? "mt-4 text-center" : "mt-12 text-center"}>
+                    <div className={deviceCalibrationOpen ? "mt-6 text-center" : "mt-12 text-center"}>
                       <p
                         className={`mb-6 text-sm uppercase tracking-[.3em] ${canType ? "text-cyan-300" : "text-zinc-600"}`}
                       >
@@ -1809,62 +1683,45 @@ export default function Home() {
                       <div
                         className={`min-h-24 font-bold leading-relaxed transition-opacity ${started && !canType ? "opacity-35" : "opacity-100"}`}
                         style={{
-                          fontSize: mobileSite
-                            ? `clamp(1.35rem, ${fontScale * 6.5}vw, ${fontScale * 2.1}rem)`
-                            : `clamp(1.5rem, ${fontScale * 3.2}vw, ${fontScale * 2.7}rem)`,
+                          fontSize: `clamp(1.5rem, ${fontScale * 3.2}vw, ${fontScale * 2.7}rem)`,
                         }}
                       >
-                        {(mobileSite
-                          ? currentMobileVerse.words
-                          : currentDisplayText.trim().split(/\s+/).filter(Boolean)
-                        ).map((word, visibleWordIndex) => {
-                          const wordIndex = mobileSite
-                            ? currentMobileVerse.startWord + visibleWordIndex
-                            : visibleWordIndex;
-                          return (
-                            <span
-                              key={wordIndex}
-                              className={`mr-3 inline-block transition-all ${canType && wordIndex === currentWord ? "text-cyan-300 [text-shadow:0_0_22px_rgba(103,232,249,.5)]" : ""}`}
-                            >
-                              {word.split("").map((char, charIndex) => {
-                                const before =
-                                  currentDisplayText
-                                    .split(/\s+/)
-                                    .slice(0, wordIndex)
-                                    .join(" ").length +
-                                  (wordIndex ? 1 : 0) +
-                                  charIndex;
-                                const feedback = characterFeedback[before];
-                                return (
-                                  <span
-                                    key={charIndex}
+                        {(noPunctuation ? target : current?.words || "")
+                          .split(/\s+/)
+                          .map((word, wordIndex) => (
+                          <span
+                            key={wordIndex}
+                            className={`mr-3 inline-block transition-all ${canType && wordIndex === currentWord ? "text-cyan-300 [text-shadow:0_0_22px_rgba(103,232,249,.5)]" : ""}`}
+                          >
+                            {word.split("").map((char, charIndex) => {
+                              const before =
+                                (noPunctuation ? target : current?.words || "")
+                                  .split(/\s+/)
+                                  .slice(0, wordIndex)
+                                  .join(" ").length +
+                                (wordIndex ? 1 : 0) +
+                                charIndex;
+                              const feedback = characterFeedback[before];
+                              return (
+                                <span
+                                  key={charIndex}
                                     className={
                                       feedback === "pending"
                                         ? "text-zinc-300"
-                                        : feedback === "correct"
-                                          ? "text-emerald-400"
-                                          : "rounded bg-red-500/30 text-red-300"
-                                    }
-                                  >
-                                    {char}
-                                  </span>
-                                );
-                              })}
-                            </span>
-                          );
-                        })}
+                                      : feedback === "correct"
+                                        ? "text-emerald-400"
+                                        : "rounded bg-red-500/30 text-red-300"
+                                  }
+                                >
+                                  {char}
+                                </span>
+                              );
+                            })}
+                          </span>
+                        ))}
                       </div>
-                      {mobileSite && currentMobileVerse.totalWords > currentMobileVerse.words.length && (
-                        <p className="mt-3 text-xs font-bold uppercase tracking-widest text-zinc-600">
-                          Palabras {currentMobileVerse.startWord + 1}–{currentMobileVerse.endWord} de {currentMobileVerse.totalWords}
-                        </p>
-                      )}
-                      <p className={`${mobileSite ? "mt-6 text-base" : "mt-8 text-xl"} text-zinc-600`}>
-                        {lyrics[lineIndex + 1]
-                          ? mobileSite
-                            ? mobileVersePreview(lyrics[lineIndex + 1].words)
-                            : lyrics[lineIndex + 1].words
-                          : "Último verso"}
+                      <p className="mt-8 text-xl text-zinc-600">
+                        {lyrics[lineIndex + 1]?.words || "Último verso"}
                       </p>
                       {started && !canType && !allLinesComplete && (
                         <div className="mx-auto mt-6 h-1.5 max-w-xs overflow-hidden rounded-full bg-white/10">
@@ -1878,49 +1735,29 @@ export default function Home() {
                       )}
                     </div>
                     <input
+                      key={lineIndex}
                       ref={inputRef}
                       value={visibleTyped}
-                      onChange={(event) => {
-                        if (!composingRef.current) handleTyping(event.target.value);
-                      }}
-                      onCompositionStart={() => {
-                        composingRef.current = true;
-                      }}
-                      onCompositionEnd={(event) => {
-                        composingRef.current = false;
-                        handleTyping(event.currentTarget.value);
-                      }}
+                      onChange={(event) => handleTyping(event.target.value)}
                       onPaste={(event) => event.preventDefault()}
                       onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
                         if (e.key === "Escape") {
                           sendPlayer("pause");
                         }
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          inputRef.current?.focus();
-                        }
                       }}
-                      disabled={!mobileSite && !canType}
-                      aria-label="Escribir la letra actual"
-                      placeholder={canType ? "Escribí la frase…" : started ? "Esperá a que comience la voz…" : "Tocá aquí para preparar el teclado"}
-                      className={mobileSite
-                        ? "mobile-game-input mt-6 h-14 w-full rounded-xl border border-white/15 bg-black/35 px-4 text-base text-white outline-none placeholder:text-zinc-600 focus:border-cyan-300"
-                        : "pointer-events-none absolute inset-0 opacity-0"}
+                      disabled={!canType}
+                      className="pointer-events-none absolute inset-0 opacity-0"
                       autoComplete="off"
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      inputMode="text"
-                      enterKeyHint="next"
                       spellCheck={false}
                     />
                   </div>
-                  <div className={`flex flex-wrap items-center justify-between gap-3 ${mobileGameActive ? "px-2 pb-2" : ""} ${mobileSite ? "[&>div]:w-full" : ""}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex gap-2">
                       <button
                         onClick={() => {
                           sendPlayer(playing ? "pause" : "play");
                         }}
-                        className={`flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 ${mobileSite ? "flex-1" : ""}`}
+                        className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3"
                       >
                         {playing ? <Pause size={18} /> : <Play size={18} />}{" "}
                         {playing ? "Pausar" : "Reproducir"}
@@ -1933,14 +1770,14 @@ export default function Home() {
                         <RotateCcw size={18} />
                       </button>
                     </div>
-                    <div className={mobileGameActive ? "hidden" : "flex gap-2"}>
+                    <div className="flex gap-2">
                       <button
                         disabled={started}
                         onClick={() => {
                           setDraftLyrics(lyrics);
                           setEditorOpen(true);
                         }}
-                        className={`flex items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-40 ${mobileSite ? "flex-1" : ""}`}
+                        className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Edit3 size={17} /> Editar sincronización
                       </button>
@@ -1948,14 +1785,14 @@ export default function Home() {
                         <button
                           onClick={startGame}
                           disabled={spotifyStatus === "loading" || spotifyStatus === "unavailable"}
-                          className={`rounded-xl bg-white px-7 py-3 font-bold text-black disabled:cursor-not-allowed disabled:opacity-40 ${mobileSite ? "flex-1" : ""}`}
+                          className="rounded-xl bg-white px-7 py-3 font-bold text-black disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Comenzar partida
                         </button>
                       )}
                     </div>
                   </div>
-                  <div className={mobileGameActive ? "hidden" : "flex flex-wrap gap-2 text-xs"}>
+                  <div className="flex flex-wrap gap-2 text-xs">
                     <button
                       disabled={started || mode === "expert"}
                       onClick={() => setLowercase((v) => !v)}
@@ -2026,7 +1863,7 @@ export default function Home() {
               Buscá canciones sin copiar enlaces, importá una playlist y retomá
               tus favoritas.
             </p>
-            <form onSubmit={doSearch} className="mb-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
+            <form onSubmit={doSearch} className="mb-4 flex max-w-2xl gap-2">
               <div className="relative flex-1">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" />
                 <input
@@ -2036,13 +1873,13 @@ export default function Home() {
                   className="h-14 w-full rounded-xl border border-white/10 bg-white/5 pl-12 pr-4 outline-none focus:border-violet-400"
                 />
               </div>
-              <button className="h-12 rounded-xl bg-violet-500 px-6 font-bold sm:h-auto">
+              <button className="rounded-xl bg-violet-500 px-6 font-bold">
                 {searching ? "Buscando…" : "Buscar"}
               </button>
             </form>
             <form
               onSubmit={importPlaylist}
-              className="mb-8 flex max-w-2xl flex-col gap-2 sm:flex-row"
+              className="mb-8 flex max-w-2xl gap-2"
             >
               <input
                 value={playlistUrl}
@@ -2050,7 +1887,7 @@ export default function Home() {
                 placeholder="Enlace de una playlist propia o colaborativa"
                 className="h-12 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 outline-none"
               />
-              <button className="h-12 rounded-xl border border-white/10 px-5 sm:h-auto">
+              <button className="rounded-xl border border-white/10 px-5">
                 {searching ? "Importando…" : "Importar"}
               </button>
             </form>
@@ -2587,16 +2424,6 @@ export default function Home() {
                 </button>
               )}
             </div>
-            {mobileSite && (
-              <a
-                href="https://discord.gg/vWBs6txYZR"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-indigo-400/20 bg-indigo-400/10 py-3 text-sm font-bold text-indigo-200"
-              >
-                <MessageCircle size={17} /> Unirme al Discord
-              </a>
-            )}
             <button
               onClick={() => {
                 Object.values(LS).forEach((key) => {
