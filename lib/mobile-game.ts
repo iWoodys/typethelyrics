@@ -1,31 +1,40 @@
-export function mobileViewportMetrics(
-  innerHeight: number,
-  viewportHeight: number,
-  viewportOffsetTop: number,
-) {
-  const visibleBottom = Math.max(
-    0,
-    Math.round(viewportHeight + Math.max(0, viewportOffsetTop)),
-  );
+export type MobileVerseWindow = {
+  startWord: number;
+  endWord: number;
+  words: string[];
+  totalWords: number;
+};
+
+export function activeTypedWord(value: string) {
+  const normalized = value.trimStart();
+  if (!normalized) return 0;
+  const completedWords = (normalized.match(/\s+/g) || []).length;
+  return Math.max(0, completedWords);
+}
+
+export function mobileVerseWindow(
+  text: string,
+  activeWord: number,
+  wordsPerWindow = 5,
+): MobileVerseWindow {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const totalWords = words.length;
+  if (!totalWords) return { startWord: 0, endWord: 0, words: [], totalWords: 0 };
+
+  const safeWindow = Math.max(1, Math.floor(wordsPerWindow));
+  if (totalWords <= safeWindow) {
+    return { startWord: 0, endWord: totalWords, words, totalWords };
+  }
+
+  const safeActiveWord = Math.max(0, Math.min(totalWords - 1, activeWord));
+  const startWord = Math.floor(safeActiveWord / safeWindow) * safeWindow;
+  const endWord = Math.min(totalWords, startWord + safeWindow);
   return {
-    cssHeight: visibleBottom,
-    obscuredHeight: Math.max(0, Math.round(innerHeight - visibleBottom)),
+    startWord,
+    endWord,
+    words: words.slice(startWord, endWord),
+    totalWords,
   };
-}
-
-export function mobileVerseWords(text: string) {
-  return text.trim().split(/\s+/).filter(Boolean);
-}
-
-export function mobileVerseFontSize(wordCount: number, scale = 1) {
-  const preset = wordCount >= 14
-    ? { minimum: 1, preferred: 4.2, maximum: 1.4 }
-    : wordCount >= 9
-      ? { minimum: 1.05, preferred: 4.8, maximum: 1.6 }
-      : wordCount >= 6
-        ? { minimum: 1.15, preferred: 5.5, maximum: 1.85 }
-        : { minimum: 1.35, preferred: 6.5, maximum: 2.1 };
-  return `clamp(${preset.minimum * scale}rem, ${preset.preferred * scale}vw, ${preset.maximum * scale}rem)`;
 }
 
 export function mobileVersePreview(text: string, maximumWords = 7) {

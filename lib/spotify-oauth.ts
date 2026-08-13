@@ -1,52 +1,12 @@
 const PRODUCTION_ORIGIN = "https://typethelyrics.sbs";
 const MOBILE_PRODUCTION_ORIGIN = "https://m.typethelyrics.sbs";
 
-export const SPOTIFY_USER_SCOPES = [
-  "playlist-read-private",
-  "streaming",
-  "user-read-email",
-  "user-read-private",
-  "user-read-playback-state",
-  "user-modify-playback-state",
-] as const;
-
 export function isAllowedSpotifyOrigin(origin: string) {
   return origin === PRODUCTION_ORIGIN || origin === MOBILE_PRODUCTION_ORIGIN;
 }
 
-export function safeSpotifyReturnTo(value: string | null | undefined) {
-  if (
-    !value ||
-    !value.startsWith("/") ||
-    value.startsWith("//") ||
-    value.includes("\\") ||
-    /[\r\n]/.test(value)
-  )
-    return "/";
-  return value;
-}
-
-type RequestHeaders = Pick<Headers, "get">;
-
-function firstForwardedValue(value: string | null) {
-  return value?.split(",")[0]?.trim() || null;
-}
-
-export function spotifyOAuthUrls(
-  requestUrl: string,
-  requestHeaders?: RequestHeaders,
-) {
-  const parsedRequest = new URL(requestUrl);
-  const forwardedHost = firstForwardedValue(
-    requestHeaders?.get("x-forwarded-host") || requestHeaders?.get("host") || null,
-  );
-  const forwardedProtocol = firstForwardedValue(
-    requestHeaders?.get("x-forwarded-proto") || null,
-  );
-  const visibleProtocol = forwardedProtocol || parsedRequest.protocol.replace(":", "");
-  const requestOrigin = forwardedHost
-    ? `${visibleProtocol}://${forwardedHost}`
-    : parsedRequest.origin;
+export function spotifyOAuthUrls(requestUrl: string) {
+  const requestOrigin = new URL(requestUrl).origin;
   const appOrigin = process.env.NODE_ENV === "production"
     ? isAllowedSpotifyOrigin(requestOrigin) ? requestOrigin : PRODUCTION_ORIGIN
     : requestOrigin;

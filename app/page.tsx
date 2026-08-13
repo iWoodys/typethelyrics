@@ -92,9 +92,9 @@ import {
   typingAlignment,
 } from "@/lib/typing";
 import {
-  mobileVerseFontSize,
+  activeTypedWord,
   mobileVersePreview,
-  mobileVerseWords,
+  mobileVerseWindow,
 } from "@/lib/mobile-game";
 
 type SongCard = {
@@ -514,7 +514,7 @@ export default function Home() {
   useEffect(() => {
     if (!mobileKeyboardOpen || !mobileGameActive) return;
     window.requestAnimationFrame(() =>
-      inputRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" }),
+      inputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }),
     );
   }, [canType, lineIndex, mobileGameActive, mobileKeyboardOpen]);
   const showLineFeedback = useCallback(
@@ -557,9 +557,12 @@ export default function Home() {
     return Math.floor(ratio * current.words.split(/\s+/).length);
   }, [current, lyrics, lineIndex, effectivePosition]);
   const currentDisplayText = noPunctuation ? target : current?.words || "";
-  const currentMobileWords = useMemo(
-    () => mobileVerseWords(currentDisplayText),
-    [currentDisplayText],
+  const mobileFocusWord = normalizedTyped
+    ? activeTypedWord(normalizedTyped)
+    : currentWord;
+  const currentMobileVerse = useMemo(
+    () => mobileVerseWindow(currentDisplayText, mobileFocusWord, 5),
+    [currentDisplayText, mobileFocusWord],
   );
 
   const finishGame = useCallback((finalStats?: {
@@ -1870,15 +1873,17 @@ export default function Home() {
                         className={`min-h-24 font-bold leading-relaxed transition-opacity ${started && !canType ? "opacity-35" : "opacity-100"}`}
                         style={{
                           fontSize: mobileSite
-                            ? mobileVerseFontSize(currentMobileWords.length, fontScale)
+                            ? `clamp(1.35rem, ${fontScale * 6.5}vw, ${fontScale * 2.1}rem)`
                             : `clamp(1.5rem, ${fontScale * 3.2}vw, ${fontScale * 2.7}rem)`,
                         }}
                       >
                         {(mobileSite
-                          ? currentMobileWords
+                          ? currentMobileVerse.words
                           : currentDisplayText.trim().split(/\s+/).filter(Boolean)
                         ).map((word, visibleWordIndex) => {
-                          const wordIndex = visibleWordIndex;
+                          const wordIndex = mobileSite
+                            ? currentMobileVerse.startWord + visibleWordIndex
+                            : visibleWordIndex;
                           return (
                             <span
                               key={wordIndex}
@@ -1912,6 +1917,11 @@ export default function Home() {
                           );
                         })}
                       </div>
+                      {mobileSite && currentMobileVerse.totalWords > currentMobileVerse.words.length && (
+                        <p className="mt-3 text-xs font-bold uppercase tracking-widest text-zinc-600">
+                          Palabras {currentMobileVerse.startWord + 1}–{currentMobileVerse.endWord} de {currentMobileVerse.totalWords}
+                        </p>
+                      )}
                       <p className={`${mobileSite ? "mt-6 text-base" : "mt-8 text-xl"} text-zinc-600`}>
                         {lyrics[lineIndex + 1]
                           ? mobileSite

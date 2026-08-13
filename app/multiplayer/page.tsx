@@ -70,9 +70,9 @@ import {
   useScreenWakeLock,
 } from "@/components/mobile-game";
 import {
-  mobileVerseFontSize,
+  activeTypedWord,
   mobileVersePreview,
-  mobileVerseWords,
+  mobileVerseWindow,
 } from "@/lib/mobile-game";
 
 type Profile = {
@@ -1131,9 +1131,12 @@ export default function MultiplayerPage() {
     return Math.floor(ratio * currentLine.words.split(/\s+/).length);
   }, [currentLine, gamePosition, lineIndex, lyrics]);
   const currentDisplayText = currentLine?.words || "";
-  const currentMobileWords = useMemo(
-    () => mobileVerseWords(currentDisplayText),
-    [currentDisplayText],
+  const mobileFocusWord = normalizedTyped
+    ? activeTypedWord(normalizedTyped)
+    : currentWord;
+  const currentMobileVerse = useMemo(
+    () => mobileVerseWindow(currentDisplayText, mobileFocusWord, 5),
+    [currentDisplayText, mobileFocusWord],
   );
   const showLineFeedback = useCallback(
     (type: "correct" | "partial" | "missed") => {
@@ -1152,7 +1155,7 @@ export default function MultiplayerPage() {
   useEffect(() => {
     if (!mobileKeyboardOpen || !mobileGameActive) return;
     window.requestAnimationFrame(() =>
-      inputRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" }),
+      inputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }),
     );
   }, [canType, lineIndex, mobileGameActive, mobileKeyboardOpen]);
 
@@ -1913,16 +1916,15 @@ export default function MultiplayerPage() {
                                   : "Canción completada"}
                       </p>
                       <div
-                        className={`min-h-24 font-bold leading-relaxed transition-opacity ${mobileSite ? "" : "text-3xl"} ${!canType ? "opacity-35" : "opacity-100"}`}
-                        style={mobileSite
-                          ? { fontSize: mobileVerseFontSize(currentMobileWords.length) }
-                          : undefined}
+                        className={`min-h-24 font-bold leading-relaxed transition-opacity ${mobileSite ? "text-2xl" : "text-3xl"} ${!canType ? "opacity-35" : "opacity-100"}`}
                       >
                         {currentLine ? (mobileSite
-                          ? currentMobileWords
+                          ? currentMobileVerse.words
                           : currentDisplayText.trim().split(/\s+/).filter(Boolean)
                         ).map((word, visibleWordIndex) => {
-                          const wordIndex = visibleWordIndex;
+                          const wordIndex = mobileSite
+                            ? currentMobileVerse.startWord + visibleWordIndex
+                            : visibleWordIndex;
                           return (
                             <span
                               key={wordIndex}
@@ -1956,6 +1958,11 @@ export default function MultiplayerPage() {
                           );
                         }) : "Preparando la letra…"}
                       </div>
+                      {mobileSite && currentMobileVerse.totalWords > currentMobileVerse.words.length && (
+                        <p className="mt-3 text-xs font-bold uppercase tracking-widest text-zinc-600">
+                          Palabras {currentMobileVerse.startWord + 1}–{currentMobileVerse.endWord} de {currentMobileVerse.totalWords}
+                        </p>
+                      )}
                       <p className={`${mobileSite ? "mt-6 text-base" : "mt-8 text-xl"} text-zinc-600`}>
                         {lyrics[lineIndex + 1]
                           ? mobileSite
