@@ -70,6 +70,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { validateSyncedLyrics } from "@/lib/lyrics";
 import { readStoredJson, writeStoredJson } from "@/lib/safe-storage";
+import { playerAccessState } from "@/lib/player-access";
 import {
   deviceOffsetFromFirstVoice,
   lyricClockFromPlayback,
@@ -241,6 +242,7 @@ export default function Home() {
   const [playlistMessage, setPlaylistMessage] = useState("");
   const [rankings, setRankings] = useState<Ranking[]>([]);
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authResolved, setAuthResolved] = useState(false);
   const [headerProfile, setHeaderProfile] = useState<HeaderProfile | null>(
     null,
   );
@@ -330,6 +332,7 @@ export default function Home() {
       if (!user) {
         setHeaderProfile(null);
         setIsAdmin(false);
+        setAuthResolved(true);
         return;
       }
       const [{ data }, { data: admin, error: adminError }] = await Promise.all([
@@ -348,6 +351,7 @@ export default function Home() {
           premium_until: null,
         },
       );
+      setAuthResolved(true);
     };
     void supabase.auth.getUser().then(({ data }) => loadProfile(data.user));
     const { data: listener } = supabase.auth.onAuthStateChange(
@@ -787,7 +791,20 @@ export default function Home() {
       sendPlayer("pause");
     }, 180);
   }, [resetGame, sendPlayer]);
+  const playerAccess = playerAccessState(authResolved, authUser?.id);
+  const requirePlayerAccount = useCallback(() => {
+    if (playerAccess === "checking") {
+      setError("Espera un momento mientras verificamos tu cuenta.");
+      return false;
+    }
+    if (playerAccess === "signed-out") {
+      setError("Necesitas crear una cuenta e iniciar sesión para jugar.");
+      return false;
+    }
+    return true;
+  }, [playerAccess]);
   const beginGame = () => {
+    if (!requirePlayerAccount()) return;
     resetGame();
     setStarted(true);
     setPosition(0);
@@ -801,6 +818,7 @@ export default function Home() {
     }, 180);
   };
   const startGame = () => {
+    if (!requirePlayerAccount()) return;
     if (spotifyStatus === "loading" || spotifyStatus === "unavailable") {
       setError(
         spotifyStatus === "loading"
@@ -816,11 +834,22 @@ export default function Home() {
     beginGame();
   };
   const acceptSpotifyNotice = () => {
+    if (!requirePlayerAccount()) {
+      setSpotifyNoticeOpen(false);
+      return;
+    }
     localStorage.setItem(LS.spotifyNotice, "1");
     setSpotifyNoticeOpen(false);
     if (spotifyStatus === "ready" || spotifyStatus === "fallback") beginGame();
     else setError("Spotify todavía no está listo. Espera unos segundos y vuelve a comenzar.");
   };
+
+  useEffect(() => {
+    if (!authResolved || authUser || !started) return;
+    resetGameAndPlayback();
+    setSpotifyNoticeOpen(false);
+    setError("Tu sesión finalizó. Inicia sesión nuevamente para jugar.");
+  }, [authResolved, authUser, resetGameAndPlayback, started]);
 
   const handleTyping = (value: string) => {
     if (!canType || !current) return;
@@ -1781,7 +1810,23 @@ export default function Home() {
                       >
                         <Edit3 size={17} /> Editar sincronización
                       </button>
-                      {!started && (
+                      {!started && playerAccess === "signed-out" && (
+                        <Link
+                          href="/auth"
+                          className="rounded-xl bg-white px-7 py-3 text-center font-bold text-black"
+                        >
+                          Crear cuenta o iniciar sesión
+                        </Link>
+                      )}
+                      {!started && playerAccess === "checking" && (
+                        <button
+                          disabled
+                          className="rounded-xl bg-white px-7 py-3 font-bold text-black opacity-40"
+                        >
+                          Verificando cuenta…
+                        </button>
+                      )}
+                      {!started && playerAccess === "allowed" && (
                         <button
                           onClick={startGame}
                           disabled={spotifyStatus === "loading" || spotifyStatus === "unavailable"}
