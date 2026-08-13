@@ -1,6 +1,6 @@
 # TypeTheLyrics
 
-Juego de mecanografía musical con canciones de Spotify, letras sincronizadas de LRCLIB, cinco modos de juego, cuentas, progreso y salas multijugador de hasta ocho personas.
+Juego de mecanografía musical para escritorio con canciones de Spotify, letras sincronizadas de LRCLIB, tres modos de juego, cuentas, progreso y salas multijugador de hasta ocho personas.
 
 ## Desarrollo local
 

@@ -29,6 +29,7 @@ import {
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import {
+  canTypeMultiplayerLine,
   GameMode,
   MULTIPLAYER_GAME_MODE_DETAILS,
   multiplayerLinePolicy,
@@ -501,7 +502,7 @@ export default function MultiplayerPage() {
 
   const joinByCode = async (rawCode = code, quiet = false) => {
     if (!authUser && !quiet) {
-      setError("Iniciá sesión para entrar a una sala.");
+      setError("Inicia sesión para entrar a una sala.");
       return;
     }
     setWorking(true);
@@ -525,7 +526,7 @@ export default function MultiplayerPage() {
       /(?:spotify:track:|spotify\.com\/(?:intl-[a-z]{2}(?:-[a-z]{2})?\/)?track\/)([a-zA-Z0-9]+)/i,
     );
     if (!match) {
-      setError("Pegá un enlace válido de Spotify.");
+      setError("Pega un enlace válido de Spotify.");
       return;
     }
     setWorking(true);
@@ -863,7 +864,7 @@ export default function MultiplayerPage() {
   const roomClock = clock + serverClockOffset;
   const wallPosition = startedAt ? Math.max(0, roomClock - startedAt) : 0;
   // El reloj compartido manda: una pausa o reinicio local de Spotify nunca puede
-  // atrasar las letras ni extender la partida para un solo jugador.
+  // retrasar las letras ni extender la partida para un solo jugador.
   const gamePosition = Math.max(0, wallPosition + deviceOffsetMs);
   const estimatedPlaybackPosition = playbackPosition === null
     ? null
@@ -945,14 +946,15 @@ export default function MultiplayerPage() {
   const lineWaitMs = currentLine
     ? Math.max(0, currentLine.startTimeMs - gamePosition)
     : 0;
-  const canType =
-    !!startedAt &&
-    countdown === 0 &&
-    singerStarted &&
-    !localFinished &&
-    !allLinesComplete &&
-    lineIndex <= timedIndex &&
-    !playbackPaused;
+  const canType = canTypeMultiplayerLine({
+    started: !!startedAt,
+    countdown,
+    singerStarted,
+    finished: localFinished,
+    allLinesComplete,
+    lineIndex,
+    timedIndex,
+  });
   const currentWord = useMemo(() => {
     if (!currentLine) return -1;
     const next =
@@ -1228,7 +1230,7 @@ export default function MultiplayerPage() {
         <div className="max-w-md rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
           <LogIn className="mx-auto text-violet-300" size={42} />
           <h1 className="mt-4 text-2xl font-black">
-            Iniciá sesión para competir
+            Inicia sesión para competir
           </h1>
           <p className="mt-2 text-zinc-400">
             Todas las cuentas pueden unirse. Las cuentas Premium también pueden
@@ -1255,7 +1257,7 @@ export default function MultiplayerPage() {
             <Gamepad2 className="mx-auto text-violet-300" size={54} />
             <h1 className="mt-4 text-4xl font-black">Multijugador</h1>
             <p className="mt-2 text-zinc-400">
-              Competí en tiempo real con hasta ocho jugadores.
+              Compite en tiempo real con hasta ocho jugadores.
             </p>
           </div>
           {error && (
@@ -1268,7 +1270,7 @@ export default function MultiplayerPage() {
               <Crown className="text-amber-300" />
               <h2 className="mt-4 text-xl font-bold">Crear una sala</h2>
               <p className="mt-2 min-h-12 text-sm text-zinc-400">
-                Elegí la canción e invitá hasta siete amigos.
+                Elige la canción e invita hasta siete amigos.
               </p>
               <button
                 disabled={!premiumActive(profile) || working}
@@ -1290,7 +1292,7 @@ export default function MultiplayerPage() {
               <Users className="text-violet-300" />
               <h2 className="mt-4 text-xl font-bold">Unirme a una sala</h2>
               <p className="mt-2 text-sm text-zinc-400">
-                Ingresá el código de seis caracteres.
+                Ingresa el código de seis caracteres.
               </p>
               <input
                 value={code}
@@ -1412,12 +1414,12 @@ export default function MultiplayerPage() {
             )}
             {lobby.spotify_track_id && spotifyStatus === "unavailable" && (
               <p role="alert" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                Spotify no entregó el reloj necesario para jugar sincronizado. Recargá la página o desactivá el bloqueador de contenido.
+                Spotify no entregó el reloj necesario para jugar sincronizado. Recarga la página o desactiva el bloqueador de contenido.
               </p>
             )}
             {lobby.spotify_track_id && spotifyStatus === "fallback" && (
               <p className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                Spotify está usando el modo compatible. Ya podés marcarte como listo; al comenzar, la sala usará su reloj compartido.
+                Spotify está usando el modo compatible. Ya puedes marcarte como listo; al comenzar, la sala usará su reloj compartido.
               </p>
             )}
             {!inGame && lobby.host_id === authUser.id && (
@@ -1506,7 +1508,7 @@ export default function MultiplayerPage() {
                 )}
                 <form onSubmit={configureSong}>
                   <label className="text-sm text-zinc-400">
-                    O pegá un enlace de Spotify
+                    O pega un enlace de Spotify
                     <input
                       value={songUrl}
                       onChange={(event) => setSongUrl(event.target.value)}
@@ -1538,7 +1540,7 @@ export default function MultiplayerPage() {
                     {MULTIPLAYER_GAME_MODE_DETAILS[gameMode].name}
                   </span>
                   <p className="mt-3 text-sm text-amber-200">
-                    Presioná Play en Spotify. La partida se habilita cuando todos tengan audio.
+                    Presiona Play en Spotify. La partida se habilita cuando todos tengan audio.
                   </p>
                 </div>
                 {lobby.host_id === authUser.id ? (
@@ -1590,7 +1592,7 @@ export default function MultiplayerPage() {
                     </div>
                     {!synchronized && (
                       <div role="status" className="mb-4 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-center text-sm text-amber-100">
-                        Spotify está fuera del tiempo de la sala ({Math.round(playbackDrift || 0)} ms). Estamos corrigiendo el audio sin atrasar los versos.
+                        Spotify está fuera del tiempo de la sala ({Math.round(playbackDrift || 0)} ms). Estamos corrigiendo el audio sin retrasar los versos.
                       </div>
                     )}
                     {playbackBuffering && (
@@ -1635,7 +1637,7 @@ export default function MultiplayerPage() {
                             : playbackPaused && singerStarted
                               ? "Spotify está pausado"
                               : canType
-                                ? "Escribí ahora"
+                                ? "Escribe ahora"
                                 : currentLine
                                   ? `La voz entra en ${(lineWaitMs / 1000).toFixed(1)} s`
                                   : "Canción completada"}

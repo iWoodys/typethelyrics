@@ -40,6 +40,20 @@ describe("multiplayerLinePolicy", () => {
     expect(multiplayerLinePolicy("expert").penalizeMissed).toBe(true);
   });
 
+  it("solo permite que Fácil pause una partida individual", () => {
+    const state = {
+      started: true,
+      playing: true,
+      allLinesComplete: false,
+      effectivePosition: 9_800,
+      nextLineStart: 10_000,
+      attempt: "hol",
+      target: "hola",
+    };
+    expect(shouldPauseEasyMode({ ...state, mode: "rhythm" })).toBe(false);
+    expect(shouldPauseEasyMode({ ...state, mode: "expert" })).toBe(false);
+  });
+
   it("convierte modos inválidos a Normal", () => {
     expect(normalizeGameMode("removed-mode")).toBe("rhythm");
     expect(normalizeGameMode("expert")).toBe("expert");
@@ -71,6 +85,20 @@ describe("multiplayerLinePolicy", () => {
         timedIndex: 0,
       }),
     ).toBe(false);
+  });
+
+  it("no depende del estado local del reproductor de cada jugador", () => {
+    expect(
+      canTypeMultiplayerLine({
+        started: true,
+        countdown: 0,
+        singerStarted: true,
+        finished: false,
+        allLinesComplete: false,
+        lineIndex: 1,
+        timedIndex: 3,
+      }),
+    ).toBe(true);
   });
 });
 
