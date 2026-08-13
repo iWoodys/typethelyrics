@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { isLikelySpotifyPreview } from "@/lib/spotify-playback";
 
 export type SpotifyPlaybackState = {
   position: number;
@@ -57,14 +56,11 @@ export type SpotifyEmbedCommand = "pause" | "play" | "restart" | "resume";
 export type SpotifyControllerStatus =
   | "loading"
   | "ready"
-  | "preview"
   | "fallback"
   | "unavailable";
 
 export type SpotifyEmbedHandle = {
-  activate: () => void;
   command: (command: SpotifyEmbedCommand) => void;
-  retry: () => void;
   seek: (seconds: number) => void;
 };
 
@@ -138,9 +134,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
     const controllerRef = useRef<SpotifyEmbedController | null>(null);
     const controllerReadyRef = useRef(false);
     const fallbackActiveRef = useRef(false);
-    const previewDetectedRef = useRef(false);
     const [useNativeFallback, setUseNativeFallback] = useState(false);
-    const [attempt, setAttempt] = useState(0);
     const updateRef = useRef(onPlaybackUpdate);
     const startedRef = useRef(onPlaybackStarted);
     const readyRef = useRef(onReady);
@@ -150,7 +144,6 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
     );
     const displayedRef = useRef(0);
     const lastTickRef = useRef(0);
-    const lastPauseCommandAtRef = useRef(0);
 
     updateRef.current = onPlaybackUpdate;
     startedRef.current = onPlaybackStarted;
@@ -202,21 +195,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
     useImperativeHandle(
       ref,
       () => ({
-        activate() {
-          const controller = controllerRef.current;
-          if (controller) {
-            controller.play();
-            return;
-          }
-          if (fallbackActiveRef.current) updateFallbackClock("play");
-          iframeRef.current?.contentWindow?.postMessage(
-            { command: "play" },
-            SPOTIFY_ORIGIN,
-          );
-        },
         command(command) {
-          if (command === "pause")
-            lastPauseCommandAtRef.current = performance.now();
           const controller = controllerRef.current;
           if (controller) {
             if (command === "play") controller.play();
@@ -230,23 +209,6 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
             { command },
             SPOTIFY_ORIGIN,
           );
-        },
-        retry() {
-          controllerRef.current?.destroy();
-          controllerRef.current = null;
-          fallbackActiveRef.current = false;
-          previewDetectedRef.current = false;
-          statusRef.current?.("loading");
-          if (!window.__typeTheLyricsSpotifyApi) {
-            document
-              .querySelector<HTMLScriptElement>(
-                'script[src="https://open.spotify.com/embed/iframe-api/v1"]',
-              )
-              ?.remove();
-            iframeApiPromise = null;
-          }
-          setUseNativeFallback(false);
-          setAttempt((value) => value + 1);
         },
         seek(seconds) {
           const safeSeconds = Math.max(0, Math.round(seconds));
@@ -266,7 +228,6 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
 
       fallbackActiveRef.current = useNativeFallback;
       controllerReadyRef.current = false;
-      previewDetectedRef.current = false;
       sampleRef.current = null;
       displayedRef.current = 0;
       lastTickRef.current = performance.now();
@@ -275,22 +236,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
       const acceptPlaybackUpdate = (state: SpotifyPlaybackState) => {
         if (!Number.isFinite(state.position)) return;
         const receivedAt = performance.now();
-        const reportedDuration = Number(state.duration) || 0;
         const previous = sampleRef.current;
-        const isPreview = isLikelySpotifyPreview({
-          expectedDurationMs: durationMs,
-          reportedDurationMs: reportedDuration,
-          positionMs: state.position,
-          isPaused: state.isPaused,
-          isBuffering: state.isBuffering,
-          wasPlaying: Boolean(previous && !previous.isPaused),
-          nowMs: receivedAt,
-          lastPauseCommandAtMs: lastPauseCommandAtRef.current,
-        });
-        if (isPreview && !previewDetectedRef.current) {
-          previewDetectedRef.current = true;
-          statusRef.current?.("preview");
-        }
         sampleRef.current = {
           ...state,
           isPaused: Boolean(state.isPaused),
@@ -365,7 +311,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
       // Esperamos al controlador; el iframe clásico queda solo como respaldo
       // para escuchar, pero el juego sabrá que no puede sincronizarse con él.
       if (!useNativeFallback && mount) {
-        fallbackTimer = window.setTimeout(activateFallback, 15_000);
+        fallbackTimer = window.setTimeout(activateFallback, 8_000);
 
         void loadIframeApi()
           .then((api) => {
@@ -392,12 +338,12 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
                 // podamos suscribirnos, por lo que no debemos esperar por él.
                 controllerReadyRef.current = true;
                 if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
-                if (!previewDetectedRef.current) statusRef.current?.("ready");
+                statusRef.current?.("ready");
                 readyRef.current?.();
                 controller.addListener("ready", () => {
                   controllerReadyRef.current = true;
                   if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
-                  if (!previewDetectedRef.current) statusRef.current?.("ready");
+                  statusRef.current?.("ready");
                 });
                 controller.addListener("playback_started", () =>
                   startedRef.current?.(),
@@ -421,7 +367,7 @@ export const SpotifyEmbed = forwardRef<SpotifyEmbedHandle, SpotifyEmbedProps>(
         controllerRef.current = null;
         if (mount?.isConnected) mount.replaceChildren();
       };
-    }, [attempt, durationMs, height, trackId, updateFallbackClock, useNativeFallback]);
+    }, [height, trackId, updateFallbackClock, useNativeFallback]);
 
     return (
       <div

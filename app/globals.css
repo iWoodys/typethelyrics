@@ -40,15 +40,14 @@ html[data-mobile-site="true"] select {
   min-height: calc(var(--mobile-viewport-height, 100dvh) - env(safe-area-inset-bottom));
 }
 
-.mobile-player-dock {
-  position: sticky;
-  top: env(safe-area-inset-top);
-  z-index: 40;
-  width: 100%;
-  padding: 0.35rem 0.5rem;
-  background: rgba(7, 8, 13, 0.96);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(14px);
+.mobile-background-player {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 320px;
+  height: 180px;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 html[data-mobile-keyboard="true"] .mobile-game-stage {

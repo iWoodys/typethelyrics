@@ -24,7 +24,6 @@ import {
   Music2,
   Play,
   Radio,
-  RotateCcw,
   Search,
   Send,
   Trophy,
@@ -36,7 +35,6 @@ import {
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import {
-  canTypeMultiplayerLine,
   GameMode,
   MULTIPLAYER_GAME_MODE_DETAILS,
   multiplayerLinePolicy,
@@ -234,7 +232,6 @@ export default function MultiplayerPage() {
   const [playbackBuffering, setPlaybackBuffering] = useState(false);
   const [spotifyStatus, setSpotifyStatus] =
     useState<SpotifyControllerStatus>("loading");
-  const [spotifyActivated, setSpotifyActivated] = useState(false);
   const liveStatsRef = useRef({ score: 0, accuracy: 100, wpm: 0, combo: 0 });
   const online = useOnlineStatus();
   const mobileGameActive =
@@ -243,11 +240,6 @@ export default function MultiplayerPage() {
     lobby.status !== "waiting" &&
     lobby.status !== "finished" &&
     !localFinished;
-  const spotifyRoomBlocked = mobileSite
-    ? spotifyStatus !== "ready" || !spotifyActivated
-    : spotifyStatus === "loading" ||
-      spotifyStatus === "unavailable" ||
-      spotifyStatus === "preview";
   const mobileKeyboardOpen = useMobileKeyboard(mobileGameActive);
   const wakeLockActive = useScreenWakeLock(mobileGameActive && !!startedAt);
   const { fullscreen, supported: fullscreenSupported, toggleFullscreen } =
@@ -582,7 +574,7 @@ export default function MultiplayerPage() {
 
   const joinByCode = async (rawCode = code, quiet = false) => {
     if (!authUser && !quiet) {
-      setError("Inicia sesión para entrar a una sala.");
+      setError("Iniciá sesión para entrar a una sala.");
       return;
     }
     setWorking(true);
@@ -606,7 +598,7 @@ export default function MultiplayerPage() {
       /(?:spotify:track:|spotify\.com\/(?:intl-[a-z]{2}(?:-[a-z]{2})?\/)?track\/)([a-zA-Z0-9]+)/i,
     );
     if (!match) {
-      setError("Pega un enlace válido de Spotify.");
+      setError("Pegá un enlace válido de Spotify.");
       return;
     }
     setWorking(true);
@@ -709,14 +701,8 @@ export default function MultiplayerPage() {
 
   const startLobby = async () => {
     if (!lobby) return;
-    if (spotifyRoomBlocked) {
-      setError(
-        spotifyStatus === "preview"
-          ? "Spotify solo habilitó una vista previa. Vuelve a intentar el reproductor antes de iniciar."
-          : mobileSite && !spotifyActivated
-              ? "Pulsa Activar Spotify y espera a escuchar la canción antes de iniciar."
-              : "Spotify todavía no entregó un reloj fiable en este navegador.",
-      );
+    if (spotifyStatus === "loading" || spotifyStatus === "unavailable") {
+      setError("Spotify todavía no entregó un reloj fiable en este navegador.");
       return;
     }
     setError("");
@@ -831,16 +817,6 @@ export default function MultiplayerPage() {
     (command: SpotifyEmbedCommand) => spotifyRef.current?.command(command),
     [],
   );
-  const activateSpotify = () => {
-    setError("");
-    spotifyRef.current?.activate();
-  };
-  const retrySpotify = () => {
-    setError("");
-    setSpotifyActivated(false);
-    setSpotifyStatus("loading");
-    spotifyRef.current?.retry();
-  };
   useEffect(() => {
     audioReadySentRef.current = null;
     countdownPreparedForRef.current = null;
@@ -854,7 +830,6 @@ export default function MultiplayerPage() {
     setPlaybackPosition(null);
     setPlaybackPaused(true);
     setPlaybackBuffering(false);
-    setSpotifyActivated(false);
   }, [lobby?.spotify_track_id]);
   const handlePlaybackUpdate = useCallback(
     (payload: SpotifyPlaybackState) => {
@@ -864,48 +839,25 @@ export default function MultiplayerPage() {
       setPlaybackBuffering(payload.isBuffering);
       setPlaybackPosition(payload.position);
       setPlaybackUpdatedAt(Date.now());
-      if (!paused) setSpotifyActivated(true);
       if (lobby.status !== "waiting") return;
-      const ready =
-        !paused &&
-        spotifyStatus !== "preview" &&
-        !(mobileSite && spotifyStatus === "fallback");
+      const ready = !paused;
       if (audioReadySentRef.current === ready) return;
       audioReadySentRef.current = ready;
       void supabase
         .rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: ready })
         .then(() => loadRoom(lobby.id));
     },
-    [lobby, loadRoom, mobileSite, spotifyStatus],
+    [lobby, loadRoom],
   );
   useEffect(() => {
-    if (
-      !lobby ||
-      lobby.status !== "waiting" ||
-      spotifyStatus !== "fallback" ||
-      mobileSite
-    )
+    if (!lobby || lobby.status !== "waiting" || spotifyStatus !== "fallback")
       return;
     if (audioReadySentRef.current === true) return;
     audioReadySentRef.current = true;
     void supabase
       .rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: true })
       .then(() => loadRoom(lobby.id));
-  }, [lobby, loadRoom, mobileSite, spotifyStatus]);
-  useEffect(() => {
-    if (
-      !lobby ||
-      lobby.status !== "waiting" ||
-      (spotifyStatus !== "preview" &&
-        !(mobileSite && spotifyStatus === "fallback"))
-    )
-      return;
-    if (audioReadySentRef.current === false) return;
-    audioReadySentRef.current = false;
-    void supabase
-      .rpc("set_lobby_audio_ready", { target_lobby: lobby.id, is_ready: false })
-      .then(() => loadRoom(lobby.id));
-  }, [lobby, loadRoom, mobileSite, spotifyStatus]);
+  }, [lobby, loadRoom, spotifyStatus]);
   useEffect(() => {
     if (!lobby?.start_at || !["countdown", "playing"].includes(lobby.status))
       return;
@@ -1105,17 +1057,14 @@ export default function MultiplayerPage() {
   const lineWaitMs = currentLine
     ? Math.max(0, currentLine.startTimeMs - gamePosition)
     : 0;
-  // El reloj de la sala es la autoridad. El estado local de Spotify puede
-  // llegar tarde en móviles y nunca debe congelar el teclado de un jugador.
-  const canType = canTypeMultiplayerLine({
-    started: !!startedAt,
-    countdown,
-    singerStarted,
-    finished: localFinished,
-    allLinesComplete,
-    lineIndex,
-    timedIndex,
-  });
+  const canType =
+    !!startedAt &&
+    countdown === 0 &&
+    singerStarted &&
+    !localFinished &&
+    !allLinesComplete &&
+    lineIndex <= timedIndex &&
+    !playbackPaused;
   const currentWord = useMemo(() => {
     if (!currentLine) return -1;
     const next =
@@ -1405,7 +1354,7 @@ export default function MultiplayerPage() {
         <div className="max-w-md rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
           <LogIn className="mx-auto text-violet-300" size={42} />
           <h1 className="mt-4 text-2xl font-black">
-            Inicia sesión para competir
+            Iniciá sesión para competir
           </h1>
           <p className="mt-2 text-zinc-400">
             Todas las cuentas pueden unirse. Las cuentas Premium también pueden
@@ -1432,7 +1381,7 @@ export default function MultiplayerPage() {
             <Gamepad2 className="mx-auto text-violet-300" size={54} />
             <h1 className="mt-4 text-4xl font-black">Multijugador</h1>
             <p className="mt-2 text-zinc-400">
-              Compite en tiempo real con hasta ocho jugadores.
+              Competí en tiempo real con hasta ocho jugadores.
             </p>
           </div>
           {error && (
@@ -1445,7 +1394,7 @@ export default function MultiplayerPage() {
               <Crown className="text-amber-300" />
               <h2 className="mt-4 text-xl font-bold">Crear una sala</h2>
               <p className="mt-2 min-h-12 text-sm text-zinc-400">
-                Elige la canción e invita hasta siete amigos.
+                Elegí la canción e invitá hasta siete amigos.
               </p>
               <button
                 disabled={!premiumActive(profile) || working}
@@ -1453,7 +1402,7 @@ export default function MultiplayerPage() {
                 className="mt-6 w-full rounded-xl bg-gradient-to-r from-amber-300 to-yellow-500 py-3 font-black text-black disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {premiumActive(profile)
-                  ? "Crear sala Premium"
+                  ? "Crear lobby Premium"
                   : "Requiere Premium"}
               </button>
             </section>
@@ -1467,7 +1416,7 @@ export default function MultiplayerPage() {
               <Users className="text-violet-300" />
               <h2 className="mt-4 text-xl font-bold">Unirme a una sala</h2>
               <p className="mt-2 text-sm text-zinc-400">
-                Introduce el código de seis caracteres.
+                Ingresá el código de seis caracteres.
               </p>
               <input
                 value={code}
@@ -1536,7 +1485,7 @@ export default function MultiplayerPage() {
             onClick={() => void (isHost ? returnToLobby() : leaveLobby())}
             className="mt-7 w-full rounded-xl bg-white py-3 text-center font-bold text-black"
           >
-            {isHost ? "Volver a la sala" : "Salir de la sala"}
+            {isHost ? "Volver a la lobby" : "Salir de la sala"}
           </button>
         </div>
       </main>
@@ -1556,7 +1505,7 @@ export default function MultiplayerPage() {
             <b className="tracking-[.2em]">{lobby.code}</b>
             <button
               onClick={() => void copyLobbyCode()}
-              aria-label="Copiar código de la sala"
+              aria-label="Copiar código de la lobby"
             >
               <Copy size={15} />
             </button>
@@ -1577,68 +1526,31 @@ export default function MultiplayerPage() {
         <div className={`${mobileGameActive ? "grid gap-0" : "mt-6 grid gap-5 lg:grid-cols-[1fr_320px]"}`}>
           <section className={`${mobileGameActive ? "p-2" : "rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7"}`}>
             {lobby.spotify_track_id && (
-              <div className={mobileGameActive ? "mobile-player-dock" : ""}>
+              <div className={mobileGameActive ? "mobile-background-player" : ""}>
                 <SpotifyEmbed
                   key={lobby.spotify_track_id}
                   ref={spotifyRef}
                   trackId={lobby.spotify_track_id}
                   durationMs={lobby.duration_ms || 0}
-                  height={152}
                   onPlaybackUpdate={handlePlaybackUpdate}
                   onControllerStatus={setSpotifyStatus}
                 />
               </div>
             )}
-            {lobby.spotify_track_id &&
-              spotifyStatus === "loading" &&
-              !mobileGameActive && (
+            {lobby.spotify_track_id && spotifyStatus === "loading" && !mobileGameActive && (
               <p className="mt-3 rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3 text-sm text-cyan-100">
                 Preparando el reloj de Spotify…
               </p>
             )}
-            {lobby.spotify_track_id &&
-              spotifyStatus === "unavailable" && (
+            {lobby.spotify_track_id && spotifyStatus === "unavailable" && (
               <p role="alert" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                Spotify no entregó el reloj necesario para jugar sincronizado. Recarga la página o desactiva el bloqueador de contenido.
+                Spotify no entregó el reloj necesario para jugar sincronizado. Recargá la página o desactivá el bloqueador de contenido.
               </p>
             )}
-            {lobby.spotify_track_id && !mobileSite && spotifyStatus === "fallback" && !mobileGameActive && (
+            {lobby.spotify_track_id && spotifyStatus === "fallback" && !mobileGameActive && (
               <p className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                Spotify está usando el modo compatible. Ya puedes marcarte como listo; al comenzar, la sala usará su reloj compartido.
+                Spotify está usando el modo compatible. Ya podés marcarte como listo; al comenzar, la sala usará su reloj compartido.
               </p>
-            )}
-            {lobby.spotify_track_id && spotifyStatus === "preview" && (
-              <p role="alert" className="mt-3 rounded-xl border border-red-300/30 bg-red-400/10 p-3 text-sm text-red-100">
-                Spotify solo habilitó una vista previa. Tu audio no se marcará como listo hasta recuperar la canción completa.
-              </p>
-            )}
-            {mobileSite && lobby.spotify_track_id && !inGame && (
-              <div className="mt-3 grid grid-cols-2 gap-2 rounded-2xl border border-emerald-400/20 bg-emerald-400/[.06] p-3">
-                <button
-                  type="button"
-                  onClick={activateSpotify}
-                  disabled={spotifyStatus !== "ready" || spotifyActivated}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-emerald-950 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Play size={16} /> {spotifyActivated ? "Spotify activado" : "Activar Spotify"}
-                </button>
-                <button
-                  type="button"
-                  onClick={retrySpotify}
-                  disabled={spotifyStatus === "loading"}
-                  className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <RotateCcw size={16} /> Reintentar
-                </button>
-                <a
-                  href="https://open.spotify.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="col-span-2 rounded-xl border border-emerald-400/20 px-3 py-2 text-center text-xs font-bold text-emerald-200"
-                >
-                  Abrir Spotify Web
-                </a>
-              </div>
             )}
             {!inGame && lobby.host_id === authUser.id && (
               <div className="mt-5 space-y-5">
@@ -1726,7 +1638,7 @@ export default function MultiplayerPage() {
                 )}
                 <form onSubmit={configureSong}>
                   <label className="text-sm text-zinc-400">
-                    O pega un enlace de Spotify
+                    O pegá un enlace de Spotify
                     <input
                       value={songUrl}
                       onChange={(event) => setSongUrl(event.target.value)}
@@ -1758,12 +1670,12 @@ export default function MultiplayerPage() {
                     {MULTIPLAYER_GAME_MODE_DETAILS[gameMode].name}
                   </span>
                   <p className="mt-3 text-sm text-amber-200">
-                    Presiona Play en Spotify. La partida se habilita cuando todos tengan audio.
+                    Presioná Play en Spotify. La partida se habilita cuando todos tengan audio.
                   </p>
                 </div>
                 {lobby.host_id === authUser.id ? (
                   <button
-                    disabled={!allReady || !allAudioReady || spotifyRoomBlocked}
+                    disabled={!allReady || !allAudioReady || spotifyStatus === "loading" || spotifyStatus === "unavailable"}
                     onClick={startLobby}
                     className={`flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 font-black text-black disabled:opacity-30 ${mobileSite ? "w-full" : ""}`}
                   >
@@ -1772,7 +1684,7 @@ export default function MultiplayerPage() {
                 ) : (
                   <button
                     onClick={toggleReady}
-                    disabled={updatingReady || spotifyRoomBlocked}
+                    disabled={updatingReady}
                     className={`rounded-xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-40 ${mobileSite ? "w-full" : ""} ${me?.ready ? "bg-emerald-400 text-black" : "bg-white text-black"}`}
                   >
                     {updatingReady ? "Guardando…" : me?.ready ? "¡Listo!" : "Estoy listo"}
@@ -1829,7 +1741,7 @@ export default function MultiplayerPage() {
                       </p>
                       {mobileSite && (
                         <p className="mt-2 text-xs text-cyan-200">
-                          Al terminar la cuenta, toca el campo de escritura para abrir el teclado.
+                          Al terminar la cuenta, tocá el campo de escritura para abrir el teclado.
                         </p>
                       )}
                     </div>
@@ -1910,7 +1822,7 @@ export default function MultiplayerPage() {
                             : playbackPaused && singerStarted
                               ? "Spotify está pausado"
                               : canType
-                                ? "Escribe ahora"
+                                ? "Escribí ahora"
                                 : currentLine
                                   ? `La voz entra en ${(lineWaitMs / 1000).toFixed(1)} s`
                                   : "Canción completada"}
@@ -2002,7 +1914,7 @@ export default function MultiplayerPage() {
                         onPaste={(event) => event.preventDefault()}
                         disabled={!mobileSite && !canType}
                         aria-label="Escribir la letra actual"
-                        placeholder={canType ? "Escribe la frase…" : "Toca aquí y espera a que comience la voz…"}
+                        placeholder={canType ? "Escribí la frase…" : "Tocá aquí y esperá a que comience la voz…"}
                         className={mobileSite
                           ? "mobile-game-input mt-6 h-14 w-full rounded-xl border border-white/15 bg-black/35 px-4 text-left text-base text-white outline-none placeholder:text-zinc-600 focus:border-cyan-300"
                           : "absolute inset-0 opacity-0"}
@@ -2143,7 +2055,7 @@ export default function MultiplayerPage() {
                     value={chatText}
                     onChange={(event) => setChatText(event.target.value)}
                     maxLength={300}
-                    placeholder="Escribe un mensaje..."
+                    placeholder="Escribi un mensaje..."
                     aria-label="Mensaje para el chat de la sala"
                     className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-cyan-400"
                   />
